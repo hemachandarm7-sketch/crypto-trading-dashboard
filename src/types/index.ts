@@ -1,13 +1,125 @@
-export type Direction = 'Long' | 'Short'
-export type TradeStatus = 'Open' | 'Closed' | 'Cancelled'
+export type Direction = 'LONG' | 'SHORT'
+export type TradeStatus = 'OPEN' | 'CLOSED'
+export type CloseReason = 'TP_HIT' | 'SL_HIT' | 'MANUAL_CLOSE' | 'UNKNOWN'
+export type ScreenshotType = 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
+export type ExtractionStatus = 'UPLOADED' | 'PROCESSING' | 'EXTRACTED' | 'MATCHED' | 'COMPLETED' | 'FAILED'
+
 export interface Trade {
-  id: string; date: string; symbol: string; exchange: string; market: string; direction: Direction
-  entryPrice: number; exitPrice?: number; quantity: number; leverage: number; investment: number
-  stopLoss?: number; takeProfit?: number; averageEntry?: number; liquidationPrice?: number
-  exitDate?: string; pnl?: number; pnlPercent?: number; status: TradeStatus; setup: string; notes: string
-  currentPrice?: number
+  id: string
+  symbol: string
+  exchange: string | null
+  marketType: string | null
+  direction: Direction
+  leverage: number | null
+  quantity: number | null
+  size: number | null
+  margin: number | null
+  avgEntry: number | null
+  ltp: number | null
+  liquidationPrice: number | null
+  takeProfit: number | null
+  stopLoss: number | null
+  openTime: string | null
+  closeTime: string | null
+  holdingDurationSeconds: number | null
+  holdingDurationDisplay: string | null
+  closePrice: number | null
+  pnlAmount: number | null
+  pnlPercentage: number | null
+  status: TradeStatus
+  closeReason: CloseReason | null
+  setup: string | null
+  notes: string | null
+  exchangePositionId: string | null
+  openTransactionId: string | null
+  closeTransactionId: string | null
+  createdAt: string
+  updatedAt: string
 }
-export type Position = Trade & { status: 'Open'; currentPrice: number }
-export interface Screenshot { id: string; name: string; type: string; size: number; addedAt: string; tradeId?: string; previewUrl: string }
-export interface AnalyticsSummary { totalPnl: number; winRate: number; lossRate: number; profitFactor: number; averageWin: number; averageLoss: number; riskReward: number; maxDrawdown: number }
-export interface UserSettings { defaultLeverage: number; defaultExchange: string; defaultMarket: string; currency: string; theme: 'dark' | 'light'; defaultRange: string; analyticsView: string }
+
+export interface ExtractedTradeData {
+  screenshotType: ScreenshotType
+  symbol?: string | null
+  direction?: Direction | null
+  eventTime?: string | null
+  transactionPrice?: number | null
+  closePrice?: number | null
+  leverage?: number | null
+  quantity?: number | null
+  size?: number | null
+  margin?: number | null
+  avgEntry?: number | null
+  ltp?: number | null
+  liquidationPrice?: number | null
+  takeProfit?: number | null
+  stopLoss?: number | null
+  pnlAmount?: number | null
+  pnlPercentage?: number | null
+  transactionId?: string
+  positionId?: string
+  exchange?: string
+  marketType?: string
+  rawText?: string
+  confidence?: number | null
+}
+
+export interface Screenshot {
+  id: string
+  tradeId: string | null
+  storagePath: string
+  screenshotType: ScreenshotType
+  uploadedAt: string
+  extractedAt: string | null
+  extractionStatus: ExtractionStatus
+  extractionRawData: Record<string, unknown> | null
+  extractionConfidence: number | null
+  sha256: string
+  originalName: string
+  contentType: string
+  sizeBytes: number
+  previewUrl?: string
+}
+
+export type TradeEventType = 'OPEN' | 'CLOSE' | 'PNL' | 'POSITION_DETAILS'
+export interface TradeEvent {
+  id: string
+  tradeId: string
+  eventType: TradeEventType
+  eventTime: string | null
+  price: number | null
+  percentage: number | null
+  rawData: Record<string, unknown>
+  screenshotId: string | null
+  createdAt: string
+}
+
+export interface AnalyticsSummary {
+  totalPnl: number
+  totalProfit: number
+  totalLoss: number
+  winRate: number
+  lossRate: number
+  averageProfit: number
+  averageLoss: number
+  profitFactor: number
+  averagePnlPercentage: number | null
+  maxDrawdown: number
+  totalInvestment: number
+  totalTrades: number
+  openTrades: number
+  closedTrades: number
+  tpHits: number
+  slHits: number
+  manualClosures: number
+  averageHoldingTimeSeconds: number | null
+}
+
+export interface UserSettings {
+  defaultLeverage: number
+  defaultExchange: string
+  defaultMarket: string
+  currency: string
+  theme: 'dark' | 'light'
+  defaultRange: string
+  analyticsView: string
+}

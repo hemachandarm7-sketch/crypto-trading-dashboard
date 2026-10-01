@@ -2,17 +2,17 @@
 
 **A modern workspace for crypto trade management, screenshot organization, analytics, and performance tracking.**
 
-> V1 is a local-first UI prototype. Example journal records are illustrative, and open-position prices are sample values for the interface. No exchange data or server is connected.
+> Trade and screenshot records are stored in Supabase. No live exchange prices or exchange API is connected.
 
 ## Features
 
 - Dark-first, responsive trading-terminal layout with Dashboard, Trades, Open Positions, Upload Screenshot, Analytics, and Settings sections.
 - Portfolio summary, equity curve, recent trades, active positions, and win/loss snapshot.
-- Trade journal with local create, edit, delete, search, and status filtering.
-- Position overview with risk levels and clearly identified sample prices.
-- Screenshot drag-and-drop, preview, metadata, and session-only delete. The OCR service boundary is prepared; image analysis is not implemented.
+- Supabase-backed trade journal with create, edit, delete, search, and status filtering.
+- Open-position tracking with values from uploaded position screenshots (no live price feed).
+- Screenshot uploads use private Supabase Storage, hash deduplication, OCR review, and trade association.
 - Analytics for realized P&L, win rate, profit factor, drawdown, direction, and coin performance.
-- Local browser persistence for trades and preferences; no authentication, backend, exchange API, OCR, or AI.
+- Supabase PostgreSQL with row-level security and an anonymous per-browser workspace. Tesseract.js performs English OCR in the browser. There is no exchange API, live pricing, or AI analysis.
 
 ## Screenshots
 
@@ -46,7 +46,7 @@ npm install
 npm run dev
 ```
 
-Vite prints the local URL (typically `http://localhost:5173`). Trade data and preferences are stored in this browser's local storage. Screenshot previews are kept in memory for the current page session.
+Vite prints the local URL (typically `http://localhost:5173`). Configure a root .env from .env.example with the Supabase project URL and publishable key. Apply supabase/migrations/001_initial_schema.sql and enable anonymous sign-ins in Supabase Auth. The project URL must not include /rest/v1. Screenshot OCR runs in the browser. The worker is bundled with the app; Tesseract downloads its English model (and WASM core) from its public CDN on first use.
 
 ## Build and checks
 
@@ -63,11 +63,12 @@ src/
   App.tsx                 Navigation, pages, and reusable UI
   main.tsx                React entry point
   styles.css              Responsive trading-terminal design system
-  data/
-    mockTrades.ts         Clearly labeled illustrative seed trades
   services/
     analytics.ts          P&L and performance calculations
-    screenshotAnalysis.ts Future OCR/AI integration boundary
+    screenshotTextParser.ts OCR text normalization
+    tradeRepository.ts    Supabase CRUD and screenshot storage
+    tradeMatchingService.ts Open/position/close matching
+    screenshotExtractionService.ts OCR provider and trade lifecycle
   types/
     index.ts              Trade, position, screenshot, analytics, and settings types
 index.html
@@ -80,15 +81,14 @@ tsconfig*.json
 
 ## Architecture
 
-The UI consumes typed trade records and calls calculation helpers in `src/services`. V1 keeps trade and preference persistence in a small browser-local storage adapter. Illustrative data lives separately in `src/data` and can be replaced by an API-backed repository later. Screenshot processing has an explicit `ScreenshotAnalysisService` interface but deliberately returns no simulated OCR results.
+The UI uses a Supabase repository for trades, settings, screenshot metadata, and lifecycle events. Tesseract.js recognizes English text in the browser behind a replaceable OCR provider interface. Extraction is shown with raw OCR and normalized fields in a review form; trade matching and database updates happen after confirmation. Pending Open events can be paired with later position details, while a Close event updates the active trade.
 
 ## Roadmap
 
-1. Add focused component and utility tests, then refine table filtering, sorting, and trade detail views.
-2. Introduce a backend and database with import/export and user authentication.
-3. Add durable screenshot storage and a real OCR/AI provider behind the analysis service.
-4. Add opt-in exchange integrations and verified market price feeds.
-5. Expand analytics, notifications, and configurable risk management.
+1. Improve OCR coverage for more exchange layouts and add review for low-confidence results.
+2. Add quote-currency and local-currency conversion handling.
+3. Add authenticated accounts and import/export.
+4. Add opt-in exchange integrations and verified market prices.
 
 ## License
 

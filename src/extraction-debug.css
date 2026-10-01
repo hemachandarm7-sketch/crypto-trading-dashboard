@@ -1,0 +1,25 @@
+.ocr-debug {
+  margin: 12px 0;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0d1319;
+}
+.ocr-debug summary { cursor: pointer; color: #8ecab0; font-size: 10px; font-weight: 600; }
+.ocr-debug h4 { margin: 12px 0 5px; color: var(--muted); font-size: 9px; }
+.ocr-debug pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 9px;
+  background: #090e13;
+  border: 1px solid #222d37;
+  border-radius: 5px;
+  color: #c4d0da;
+  font: 10px/1.5 ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ocr-debug .notice { margin: 8px 0; padding: 8px; font-size: 10px; }
+.light .ocr-debug { background: #f6f9fb; }
+.light .ocr-debug pre { background: #fff; color: #263442; }
