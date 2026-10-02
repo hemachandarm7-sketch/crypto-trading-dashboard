@@ -129,6 +129,20 @@ describe('exchange screenshot OCR normalization', () => {
     expect(parsed.liquidationPrice).toBe(0.02463)
   })
 
+  it.each([
+    [
+      'Qty (RARE)\nSize (USDT)\nMargin (USDT)\n8073\n136.353\n18.379\nAvg. Entry\nLTP\nLiq. Price\n0.02270\n0.01689\n0.02463',
+      8073, 136.353, 18.379, 0.02463,
+    ],
+    [
+      'Qty (RARE) Size (USDT) Margin (USDT)\n8073\n136.353\n18.379\nAvg. Entry LTP Liq. Price\n0.02270 0.01689 0.02463',
+      8073, 136.353, 18.379, 0.02463,
+    ],
+  ])('keeps Margin populated when OCR splits header/value rows (%s)', (grid, quantity, size, margin, liquidationPrice) => {
+    const parsed = normalizeExtractedText(`RARE/USDT\nSHORT 10x\n${grid}`)
+    expect(parsed).toMatchObject({ quantity, size, margin, liquidationPrice })
+  })
+
   it('recognizes the close, net USDT P&L, price, and timestamp', () => {
     const result = normalizeExtractedText(closeScreenshotText)
     expect(result).toMatchObject({

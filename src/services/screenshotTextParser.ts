@@ -27,7 +27,7 @@ function extractLeverage(text: string): number | undefined {
 
 function labeledGridNumber(text: string, label: string): number | undefined {
   const fieldPatterns = [
-    /(?:Qty|Quantity)\b/i, /\bSize\b/i, /\bMargin\b/i,
+    /(?:Qty|Quantity)\b/i, /\bSize\b/i, /\bMargin(?:\s+Used)?\b/i,
     /(?:Avg\.?\s*Entry|Average\s*Entry)\b/i,
     /(?:LTP|Last\s*Traded\s*Price)\b/i,
     /(?:Liq\.?|Lig\.?)\s*Price\b|Liquidation\s*Price\b/i,
@@ -38,18 +38,50 @@ function labeledGridNumber(text: string, label: string): number | undefined {
   for (const [lineIndex, line] of lines.entries()) {
     const target = targetPattern.exec(line)
     if (!target) continue
-    const positions = fieldPatterns
-      .map((pattern, fieldIndex) => ({ fieldIndex, index: pattern.exec(line)?.index ?? -1 }))
+    const labelsOnLine = (candidate: string) => fieldPatterns
+      .map((pattern, fieldIndex) => ({ fieldIndex, index: pattern.exec(candidate)?.index ?? -1 }))
       .filter(field => field.index >= 0)
       .sort((a, b) => a.index - b.index)
-    const valueIndex = positions.findIndex(field => field.index === target.index)
-    if (valueIndex < 0) continue
-    // OCR commonly returns a header row followed by a value row. Only read the
-    // immediately following non-empty row: searching farther can pair a missing
-    // Margin cell with the third price on the later Avg Entry/LTP/Liq. Price row.
-    const valueLine = lines.slice(lineIndex + 1).find(candidate => candidate.trim().length > 0)
-    if (!valueLine || fieldPatterns.some(pattern => pattern.test(valueLine))) continue
-    const value = valueLine?.match(/[+-]?\d[\d,]*(?:\.\d+)?/g)?.[valueIndex]
+
+    // OCR may emit a compact header, one label per line, or one value per line.
+    // Treat adjacent label lines as one column header and collect only the
+    // contiguous numeric block that follows it. A later labeled section (such
+    // as Avg Entry / LTP / Liq. Price) is a hard boundary.
+    let groupStart = lineIndex
+    while (groupStart > 0) {
+      let previous = groupStart - 1
+      while (previous >= 0 && !lines[previous].trim()) previous--
+      if (previous < 0 || labelsOnLine(lines[previous]).length === 0) break
+      groupStart = previous
+    }
+
+    let groupEnd = lineIndex
+    while (groupEnd + 1 < lines.length) {
+      let next = groupEnd + 1
+      while (next < lines.length && !lines[next].trim()) next++
+      if (next >= lines.length || labelsOnLine(lines[next]).length === 0) break
+      groupEnd = next
+    }
+
+    const headerFields: Array<{ fieldIndex: number; lineIndex: number; index: number }> = []
+    for (let headerLine = groupStart; headerLine <= groupEnd; headerLine++) {
+      headerFields.push(...labelsOnLine(lines[headerLine]).map(field => ({ ...field, lineIndex: headerLine })))
+    }
+    const targetField = headerFields.findIndex(field => field.lineIndex === lineIndex && field.index === target.index)
+    if (targetField < 0) continue
+
+    const values: string[] = []
+    for (let valueLineIndex = groupEnd + 1; valueLineIndex < lines.length; valueLineIndex++) {
+      const valueLine = lines[valueLineIndex].trim()
+      if (!valueLine) continue
+      if (labelsOnLine(valueLine).length > 0) break
+      const rowValues = valueLine.match(/[+-]?\d[\d,]*(?:\.\d+)?/g)
+      if (!rowValues?.length) break
+      values.push(...rowValues)
+      if (values.length >= headerFields.length) break
+    }
+
+    const value = values[targetField]
     if (!value) continue
     const parsed = Number(value.replace(/,/g, ''))
     if (Number.isFinite(parsed)) return parsed
