@@ -32,3 +32,5 @@
 .error-notice b { color: var(--red); }
 .success-notice { border-color: color-mix(in srgb, var(--green) 50%, transparent); }
 .success-notice b { color: var(--green); }
+
+.extraction-warning{border:1px solid #8a6a34;border-radius:8px;padding:10px 12px;color:#f0d29b;background:#302818}

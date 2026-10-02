@@ -132,7 +132,14 @@ export async function normalizeScreenshotCurrencies(data: ExtractedTradeData): P
         trace('[CURRENCY] INR to USD rate unavailable; preserving original in screenshot metadata', error)
       }
     }
-    normalized.currencyAudit![field] = { originalValue: value, originalCurrency: currency, usdRate, rateDate }
+    normalized.currencyAudit![field] = {
+      originalValue: value,
+      originalCurrency: currency,
+      usdRate,
+      rateDate,
+      rateSource: currency === 'INR' ? 'Frankfurter API' : null,
+      convertedAt: currency === 'INR' && usdRate != null ? new Date().toISOString() : null,
+    }
     normalized[field] = usdRate == null ? null : value * usdRate
   }
   return normalized

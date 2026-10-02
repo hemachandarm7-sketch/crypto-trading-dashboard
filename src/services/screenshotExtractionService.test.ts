@@ -41,6 +41,17 @@ const positionScreenshotText = [
   '0.02270 0.01689 0.02463',
   'TP : 0.01255 SL : 0.01795',
 ].join('\n')
+const actualPositionScreenshotOcr = `[ J
+INR Futures USDT Futures Global Futures
+RARE « USDT
+Short 10x Isolated
+Active PNL (INR)
++34,719.49 16.904 USDT +255.20%
+Qty (RARE) Size (USDT) Margin (USDT)
+8073 136.353 18.379
+Avg. Entry LTP Liq. Price
+0.02270 0.01689 0.02463
+TP :0.01255 SL:0.01795`
 const rareShort: Trade = {
   id: 'rare-short', symbol: 'RARE/USDT', exchange: null, marketType: 'Futures', direction: 'SHORT',
   leverage: 10, quantity: 8073, size: 136.353, margin: 18.379, avgEntry: 0.0227, ltp: 0.01689,
@@ -85,6 +96,39 @@ describe('exchange screenshot OCR normalization', () => {
     expect(result.pnlAmount).toBeUndefined()
   })
 
+  it('extracts the real supplied RARE/USDT screenshot fields without shifting Margin into Liq. Price', () => {
+    const result = normalizeExtractedText(actualPositionScreenshotOcr)
+    expect(result).toMatchObject({
+      screenshotType: 'POSITION_DETAILS', symbol: 'RARE/USDT', direction: 'SHORT', leverage: 10,
+      quantity: 8073, size: 136.353, margin: 18.379, avgEntry: 0.0227, ltp: 0.01689,
+      liquidationPrice: 0.02463, takeProfit: 0.01255, stopLoss: 0.01795,
+    })
+    expect(result.fieldCurrencies).toMatchObject({ size: 'USDT', margin: 'USDT', liquidationPrice: 'USDT' })
+  })
+
+  it.each([
+    ['Margin: 25.00 USDT\nLiq. Price: 98500.00 USDT', 25, 98500],
+    ['Margin: 100 USDT\nLiquidation Price: 105000 USDT', 100, 105000],
+  ])('keeps labeled Margin separate from Liquidation Price (%s)', (labels, expectedMargin, expectedLiquidation) => {
+    const parsed = normalizeExtractedText(`RARE/USDT\nShort 10x\n${labels}`)
+    expect(parsed.margin).toBe(expectedMargin)
+    expect(parsed.liquidationPrice).toBe(expectedLiquidation)
+    expect(parsed.leverage).toBe(10)
+    expect(parsed.fieldCurrencies?.margin).toBe('USDT')
+    expect(parsed.fieldCurrencies?.liquidationPrice).toBe('USDT')
+  })
+
+  it('does not borrow the liquidation-price column when the Margin row is incomplete', () => {
+    const parsed = normalizeExtractedText([
+      'RARE/USDT', 'SHORT 10x', 'Qty (RARE) Size (USDT) Margin (USDT)', '8073 136.353',
+      'Avg. Entry LTP Liq. Price', '0.02270 0.01689 0.02463', 'TP : 0.01255 SL : 0.01795',
+    ].join('\n'))
+    expect(parsed.quantity).toBe(8073)
+    expect(parsed.size).toBe(136.353)
+    expect(parsed.margin).toBeUndefined()
+    expect(parsed.liquidationPrice).toBe(0.02463)
+  })
+
   it('recognizes the close, net USDT P&L, price, and timestamp', () => {
     const result = normalizeExtractedText(closeScreenshotText)
     expect(result).toMatchObject({
@@ -102,10 +146,15 @@ describe('exchange screenshot OCR normalization', () => {
 
   it('keeps USDT position monetary fields normalized as USD 1:1', async () => {
     const parsed = normalizeExtractedText(positionScreenshotText)
+    vi.mocked(getInrToUsdRate).mockClear()
     expect(parsed.fieldCurrencies).toMatchObject({ size: 'USDT', margin: 'USDT', avgEntry: 'USDT', takeProfit: 'USDT', stopLoss: 'USDT' })
     const result = await normalizeScreenshotCurrencies(parsed)
     expect(result.size).toBe(136.353)
     expect(result.currencyAudit?.size).toMatchObject({ originalValue: 136.353, originalCurrency: 'USDT', usdRate: 1 })
+    expect(result.margin).toBe(18.379)
+    expect(result.liquidationPrice).toBe(0.02463)
+    expect(result.currencyAudit?.margin).toMatchObject({ originalValue: 18.379, originalCurrency: 'USDT', usdRate: 1 })
+    expect(getInrToUsdRate).not.toHaveBeenCalled()
   })
 
   it('converts INR monetary values using the event-date rate and retains original audit values', async () => {
@@ -114,7 +163,44 @@ describe('exchange screenshot OCR normalization', () => {
       fieldCurrencies: { pnlAmount: 'INR' },
     })
     expect(result.pnlAmount).toBeCloseTo(11.36)
-    expect(result.currencyAudit?.pnlAmount).toEqual({ originalValue: 1000, originalCurrency: 'INR', usdRate: 0.01136, rateDate: '2026-10-02' })
+    expect(result.currencyAudit?.pnlAmount).toMatchObject({ originalValue: 1000, originalCurrency: 'INR', usdRate: 0.01136, rateDate: '2026-10-02', rateSource: 'Frankfurter API' })
+    expect(result.currencyAudit?.pnlAmount?.convertedAt).toBeTruthy()
+  })
+
+  it('parses and converts an explicitly rupee-denominated margin', async () => {
+    const parsed = normalizeExtractedText('RARE/USDT\nMargin: ₹8,500')
+    expect(parsed.margin).toBe(8500)
+    expect(parsed.fieldCurrencies?.margin).toBe('INR')
+    vi.mocked(getInrToUsdRate).mockClear()
+    const converted = await normalizeScreenshotCurrencies(parsed)
+    expect(getInrToUsdRate).toHaveBeenCalledOnce()
+    expect(converted.margin).toBeCloseTo(96.56)
+    expect(converted.currencyAudit?.margin).toMatchObject({ originalValue: 8500, originalCurrency: 'INR', usdRate: 0.01136, rateSource: 'Frankfurter API' })
+  })
+
+  it('recognizes Rs. as an explicit INR marker', () => {
+    const parsed = normalizeExtractedText('Margin: Rs. 8,500')
+    expect(parsed.margin).toBe(8500)
+    expect(parsed.fieldCurrencies?.margin).toBe('INR')
+  })
+
+  it('does not convert USDT based on an INR value elsewhere in unrelated raw text', async () => {
+    const parsed = normalizeExtractedText('RARE/USDT\nMargin: 100 USDT\nNet PNL: ₹850')
+    expect(parsed.margin).toBe(100)
+    expect(parsed.fieldCurrencies?.margin).toBe('USDT')
+    vi.mocked(getInrToUsdRate).mockClear()
+    const result = await normalizeScreenshotCurrencies(parsed)
+    expect(result.margin).toBe(100)
+    expect(result.currencyAudit?.margin).toMatchObject({ originalValue: 100, originalCurrency: 'USDT', usdRate: 1 })
+    expect(getInrToUsdRate).toHaveBeenCalledOnce() // Only the explicitly rupee-denominated P&L is converted.
+  })
+
+  it('leaves a monetary amount with no currency evidence unconverted', async () => {
+    vi.mocked(getInrToUsdRate).mockClear()
+    const result = await normalizeScreenshotCurrencies({ screenshotType: 'POSITION_DETAILS', margin: 25 })
+    expect(result.margin).toBe(25)
+    expect(result.currencyAudit?.margin).toBeUndefined()
+    expect(getInrToUsdRate).not.toHaveBeenCalled()
   })
 
   it('does not change explicitly USD monetary values', async () => {
@@ -137,7 +223,7 @@ describe('exchange screenshot OCR normalization', () => {
     vi.mocked(getInrToUsdRate).mockRejectedValueOnce(new Error('offline'))
     const result = await normalizeScreenshotCurrencies({ screenshotType: 'PNL', pnlAmount: 1000, fieldCurrencies: { pnlAmount: 'INR' } })
     expect(result.pnlAmount).toBeNull()
-    expect(result.currencyAudit?.pnlAmount).toEqual({ originalValue: 1000, originalCurrency: 'INR', usdRate: null, rateDate: null })
+    expect(result.currencyAudit?.pnlAmount).toMatchObject({ originalValue: 1000, originalCurrency: 'INR', usdRate: null, rateDate: null, rateSource: 'Frankfurter API', convertedAt: null })
   })
 })
 

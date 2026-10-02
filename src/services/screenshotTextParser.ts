@@ -44,8 +44,11 @@ function labeledGridNumber(text: string, label: string): number | undefined {
       .sort((a, b) => a.index - b.index)
     const valueIndex = positions.findIndex(field => field.index === target.index)
     if (valueIndex < 0) continue
-    const valueLine = lines.slice(lineIndex + 1).find(candidate =>
-      (candidate.match(/[+-]?\d[\d,]*(?:\.\d+)?/g)?.length ?? 0) >= positions.length)
+    // OCR commonly returns a header row followed by a value row. Only read the
+    // immediately following non-empty row: searching farther can pair a missing
+    // Margin cell with the third price on the later Avg Entry/LTP/Liq. Price row.
+    const valueLine = lines.slice(lineIndex + 1).find(candidate => candidate.trim().length > 0)
+    if (!valueLine || fieldPatterns.some(pattern => pattern.test(valueLine))) continue
     const value = valueLine?.match(/[+-]?\d[\d,]*(?:\.\d+)?/g)?.[valueIndex]
     if (!value) continue
     const parsed = Number(value.replace(/,/g, ''))
@@ -104,6 +107,9 @@ function extractSymbol(text: string): string | undefined {
 }
 
 export function normalizeExtractedText(text: string, confidence?: number): ExtractedTradeData {
+  // Normalize common Indian currency spelling so the labelled-number parser
+  // can read it without losing the explicit INR signal.
+  text = text.replace(/\bRs\.?[ \t]*(?=\d)/gi, '₹')
   const screenshotType = classify(text)
   const symbol = text.match(/\b(?:Symbol|Pair|Contract)\s*[:=#]?\s*([A-Z0-9]{2,}(?:\s*[/_-]\s*[A-Z0-9]{2,})?)/i)?.[1]
     ?? text.match(/\b([A-Z0-9]{2,}\s*\/\s*(?:USDT|USDC|USD|BTC|ETH))\b/i)?.[1]
@@ -113,10 +119,10 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
     ?? text.match(/\b(LONG|SHORT)\b/i)?.[1]
   const direction: Direction | undefined = side?.toUpperCase() as Direction | undefined
   const leverage = extractLeverage(text)
-  const fieldText = text.replace(/\b(Qty|Quantity|Size|Margin)\s*\([^)]*\)/gi, '$1')
+  const fieldText = text.replace(/\b(Qty|Quantity|Size|Margin(?:\s+Used)?)\s*\([^)]*\)/gi, '$1')
   const quantity = labeledNumber(fieldText, '(?:Qty|Quantity)')
   const size = labeledNumber(fieldText, 'Size')
-  const margin = labeledNumber(fieldText, 'Margin')
+  const margin = labeledNumber(fieldText, 'Margin(?:\\s+Used)?')
   const avgEntry = labeledNumber(text, 'Avg\\.?\\s*Entry') ?? labeledNumber(text, 'Average\\s*Entry') ?? labeledNumber(text, 'Entry\\s*Price')
   const ltp = labeledNumber(text, '(?:LTP|Last\\s*Traded\\s*Price)')
   const liquidationPrice = labeledNumber(text, '(?:Li[qg]\\.?\\s*Price|Liquidation\\s*Price)')
@@ -132,7 +138,7 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const marketType = text.match(/\b(Spot|Perpetual|Futures)\b/i)?.[1]
   const fieldCurrencies: Partial<Record<MonetaryField, CurrencyCode>> = {}
   const currencyCandidates: [MonetaryField, string][] = [
-    ['size', '\\bSize\\b'], ['margin', '\\bMargin\\b'], ['transactionPrice', '\\b(?:Transaction\\s+)?Price\\b'],
+    ['size', '\\bSize\\b'], ['margin', '\\bMargin(?:\\s+Used)?\\b'], ['transactionPrice', '\\b(?:Transaction\\s+)?Price\\b'],
     ['closePrice', '\\b(?:Close|Exit)\\s+Price\\b'], ['avgEntry', '\\b(?:Avg\\.?\\s*Entry|Average\\s*Entry|Entry\\s*Price)\\b'],
     ['ltp', '\\b(?:LTP|Last\\s*Traded\\s*Price)\\b'], ['liquidationPrice', '\\b(?:Li[qg]\\.?\\s*Price|Liquidation\\s*Price)\\b'],
     ['takeProfit', '\\b(?:TP|Take\\s*Profit)\\b'], ['stopLoss', '\\b(?:SL|Stop\\s*Loss)\\b'],
@@ -141,10 +147,16 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   for (const [field, label] of currencyCandidates) {
     const match = new RegExp(label, 'i').exec(text)
     if (!match) continue
-    const context = text.slice(Math.max(0, match.index - 48), Math.min(text.length, match.index + match[0].length + 90))
-    const currency = detectCurrency(context)
+    const lineEndIndex = text.indexOf('\n', match.index)
+    const lineEnd = lineEndIndex < 0 ? text.length : lineEndIndex
+    const labelLine = text.slice(match.index, lineEnd)
+    const nextLine = text.slice(lineEnd + 1).split(/\r?\n/).find(candidate => candidate.trim()) ?? ''
+    const nextValueLine = /\b(?:Qty|Quantity|Size|Margin(?: Used)?|Avg\.?\s*Entry|Average\s*Entry|LTP|Last\s*Traded\s*Price|Li[qg]\.?\s*Price|Liquidation\s*Price|TP|Take\s*Profit|SL|Stop\s*Loss|Net\s+P(?:NL|&L))\b/i.test(nextLine) ? '' : nextLine
+    // Keep currency detection close to this label/value pair. A broad text
+    // window can accidentally borrow INR from an unrelated P&L line.
+    const currency = detectCurrency(labelLine)
+      ?? detectCurrency(nextValueLine)
       ?? (normalizedSymbol?.toUpperCase().includes('/USDT') ? 'USDT' : null)
-      ?? detectCurrency(text)
     if (currency) fieldCurrencies[field] = currency
   }
   if (screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL') {
