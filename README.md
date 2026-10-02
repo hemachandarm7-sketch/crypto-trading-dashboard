@@ -48,6 +48,17 @@ npm run dev
 
 Vite prints the local URL (typically `http://localhost:5173`). Configure a root .env from .env.example with the Supabase project URL and publishable key. Apply supabase/migrations/001_initial_schema.sql and enable anonymous sign-ins in Supabase Auth. The project URL must not include /rest/v1. Screenshot OCR runs in the browser. The worker is bundled with the app; Tesseract downloads its English model (and WASM core) from its public CDN on first use.
 
+## Deploy to Vercel
+
+Import `hemachandarm7-sketch/crypto-trading-dashboard` from GitHub in Vercel. Use the Vite preset (or configure the project root), with `npm install` as the install command, `npm run build` as the build command, and `dist` as the output directory. Add these environment variables for Production and Preview:
+
+```env
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+```
+
+Use the Supabase project URL and publishable/anon key only. Never add the service-role key. Apply the SQL migrations and enable the configured Supabase Auth provider before testing the deployed app. Browser OCR uses Tesseract.js and needs no OCR API key; first use downloads the English model and WASM core from the public CDN. `vercel.json` provides SPA route fallback.
+
 ## Build and checks
 
 ```bash
