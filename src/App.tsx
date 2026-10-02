@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, Bitcoin, CalendarDays, Camera, Check, ChevronDown, CircleHelp, Clock3, CloudUpload, FileImage, Filter, LayoutDashboard, Menu, MoreHorizontal, Plus, Search, Settings as SettingsIcon, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, TrendingUp, Upload, Wallet, X } from 'lucide-react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { buildCloseReasonPerformance, buildCoinPerformance, buildDirectionPerformance, buildEquityCurve, buildPnlBuckets, getAnalytics, getRealizedPnl } from './services/analytics'
@@ -59,6 +59,23 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const previousPage = useRef(page)
+  const previousIdentityId = useRef(identity?.id ?? null)
+
+  useLayoutEffect(() => {
+    const nextIdentityId = identity?.id ?? null
+    if (previousIdentityId.current === nextIdentityId) return
+    previousIdentityId.current = nextIdentityId
+    setTradeForm(null)
+    setDetailTrade(null)
+    setReviewScreenshot(null)
+    setQuery('')
+    setFilterStatus('ALL')
+    setFilterDirection('ALL')
+    setFilterExchange('ALL')
+    setError(null)
+    setSuccess(null)
+    setDragging(false)
+  }, [identity?.id, setError])
 
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
   useEffect(() => { document.documentElement.dataset.theme = settings.theme }, [settings.theme])
@@ -190,7 +207,7 @@ export default function App() {
         {page === 'Open Positions' && <PositionsPage trades={positions} now={now} onAdd={() => setTradeForm('new')} onDetail={setDetailTrade} currency={settings.currency}/>}
         {page === 'Upload Screenshot' && <UploadPage screenshots={screenshots} trades={trades} dragging={dragging} setDragging={setDragging} inputRef={inputRef} cameraInputRef={cameraInputRef} onFiles={uploadFiles} onReview={setReviewScreenshot} onRetry={retryScreenshot} onDelete={shot => safeAction(() => deleteScreenshot(shot))} onAssociate={(shot, id) => safeAction(() => associateScreenshot(shot.id, id || null))} now={now}/>}
         {page === 'Analytics' && <AnalyticsPage trades={trades} stats={stats} range={analyticsRange} setRange={setAnalyticsRange} currency={settings.currency}/>}
-        {page === 'Settings' && <SettingsPage settings={settings} onSave={changeSettings} identity={identity} tradeCount={trades.length} onLinkWorkspace={linkCurrentWorkspace} onFinishAccount={completeCurrentAccount} onRequestReset={requestCurrentPasswordReset} onLogout={logOut}/>}
+        {page === 'Settings' && <SettingsPage key={identity.id} settings={settings} onSave={changeSettings} identity={identity} tradeCount={trades.length} working={working} onLinkWorkspace={linkCurrentWorkspace} onFinishAccount={completeCurrentAccount} onRequestReset={requestCurrentPasswordReset} onLogout={logOut}/>}
       </div>
     </main>
     {tradeForm && <TradeEditor trade={tradeForm === 'new' ? null : tradeForm} onClose={() => setTradeForm(null)} onSave={saveTrade} working={working}/>}
@@ -277,9 +294,9 @@ function PnlChart({ data }: { data:{date:string;pnl:number}[] }) {
   return <div className="small-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={data}><CartesianGrid stroke="#242c35" strokeDasharray="4 5" vertical={false}/><XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill:'#9aa5b3',fontSize:10}}/><YAxis tickFormatter={(value:number)=>formatCurrencyUSD(value)} axisLine={false} tickLine={false} tick={{fill:'#778391',fontSize:9}} width={38}/><Tooltip {...chartTooltip}/><Bar dataKey="pnl" radius={[5,5,0,0]}>{data.map((item,index)=><Cell key={index} fill={item.pnl>=0?'#55d69e':'#fa7180'}/>)}</Bar></BarChart></ResponsiveContainer></div>
 }
 
-function SettingsPage({ settings, onSave, identity, tradeCount, onLinkWorkspace, onFinishAccount, onRequestReset, onLogout }: {
+function SettingsPage({ settings, onSave, identity, tradeCount, working, onLinkWorkspace, onFinishAccount, onRequestReset, onLogout }: {
   settings:UserSettings; onSave:(next:UserSettings)=>Promise<void>; identity:{ id:string; email:string|null; isAnonymous:boolean; displayName:string|null; accountSetupPending:boolean; emailConfirmed:boolean }
-  tradeCount:number; onLinkWorkspace:(email:string,displayName:string)=>Promise<void>; onFinishAccount:(password:string)=>Promise<void>; onRequestReset:()=>Promise<void>; onLogout:()=>Promise<void>
+  tradeCount:number; working:boolean; onLinkWorkspace:(email:string,displayName:string)=>Promise<void>; onFinishAccount:(password:string)=>Promise<void>; onRequestReset:()=>Promise<void>; onLogout:()=>Promise<void>
 }) {
   const [draft,setDraft]=useState(settings)
   const [email,setEmail]=useState('')
@@ -316,7 +333,7 @@ function SettingsPage({ settings, onSave, identity, tradeCount, onLinkWorkspace,
         </form>
       </> : <div className="account-message account-success" role="status">Verification is pending for {identity.email}. Open the confirmation email on this device. When verification completes, return here to set your password. Your existing trades remain attached to this workspace.</div> : <>
         <p className="account-connected" role="status">Signed in as <b>{identity.email}</b>{identity.displayName?<> · {identity.displayName}</>:null}</p>
-        <div className="account-settings-actions"><Button secondary onClick={()=>void onRequestReset()}>Send password reset link</Button><Button secondary onClick={()=>void onLogout()}>Sign out</Button></div>
+        <div className="account-settings-actions"><Button secondary disabled={working} onClick={()=>void onRequestReset()}>Send password reset link</Button><Button secondary disabled={working} onClick={()=>void onLogout()}>Sign out</Button></div>
         <small>Signing in with this same email and password on another device loads the same Supabase-owned trades. Signing out clears this device's session; it does not delete database records.</small>
       </>}
     </section>

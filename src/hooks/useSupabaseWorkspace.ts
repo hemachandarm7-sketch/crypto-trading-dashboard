@@ -58,7 +58,8 @@ export function useSupabaseWorkspace() {
     const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
       const user = session?.user
       const nextId = user?.id ?? null
-      if (nextId !== identityId.current) {
+      const identityChanged = nextId !== identityId.current
+      if (identityChanged) {
         requestId.current += 1
         setTrades([])
         setScreenshots([])
@@ -67,7 +68,7 @@ export function useSupabaseWorkspace() {
       identityId.current = nextId
       setIdentity(user ? mapWorkspaceIdentity(user) : null)
       if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
-      if (event === 'SIGNED_OUT') setPasswordRecovery(false)
+      else if (event === 'SIGNED_OUT' || identityChanged) setPasswordRecovery(false)
       // Supabase advises deferring follow-up auth work until after its callback completes.
       window.setTimeout(() => { void refresh() }, 0)
     })
