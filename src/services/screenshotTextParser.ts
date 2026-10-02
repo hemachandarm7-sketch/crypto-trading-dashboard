@@ -11,6 +11,19 @@ function labeledNumber(text: string, label: string): number | undefined {
   return labeledGridNumber(text, label)
 }
 
+/** Accept only an explicit multiplier or an explicitly labelled leverage value. */
+function extractLeverage(text: string): number | undefined {
+  const normalized = text.normalize('NFKC').replace(/[×]/g, 'x').replace(/\s+/g, ' ').trim()
+  const labelled = labeledNumber(normalized, 'Leverage')
+  if (labelled != null && labelled > 0) return labelled
+
+  const directionAdjacent = normalized.match(/\b(?:long|short)\b.{0,32}?\b(\d+(?:\.\d+)?)\s*x\b/i)
+  const explicitMultiplier = directionAdjacent ?? normalized.match(/\b(\d+(?:\.\d+)?)\s*x\b/i)
+  if (!explicitMultiplier) return undefined
+  const value = Number(explicitMultiplier[1])
+  return Number.isFinite(value) && value > 0 ? value : undefined
+}
+
 function labeledGridNumber(text: string, label: string): number | undefined {
   const fieldPatterns = [
     /(?:Qty|Quantity)\b/i, /\bSize\b/i, /\bMargin\b/i,
@@ -97,7 +110,7 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
     ?? text.match(/\b(LONG|SHORT)\s+\d+(?:\.\d+)?\s*x\b/i)?.[1]
     ?? text.match(/\b(LONG|SHORT)\b/i)?.[1]
   const direction: Direction | undefined = side?.toUpperCase() as Direction | undefined
-  const leverage = labeledNumber(text, 'Leverage') ?? (Number(text.match(/\b(?:LONG|SHORT)\s+(\d+(?:\.\d+)?)\s*x\b/i)?.[1]) || undefined)
+  const leverage = extractLeverage(text)
   const fieldText = text.replace(/\b(Qty|Quantity|Size|Margin)\s*\([^)]*\)/gi, '$1')
   const quantity = labeledNumber(fieldText, '(?:Qty|Quantity)')
   const size = labeledNumber(fieldText, 'Size')

@@ -48,6 +48,22 @@ const rareShort: Trade = {
 }
 
 describe('exchange screenshot OCR normalization', () => {
+  it.each([
+    ['LONG 10x', 'LONG', 10],
+    ['SHORT 10x', 'SHORT', 10],
+    ['SHORT 20x', 'SHORT', 20],
+    ['LONG\n10 x', 'LONG', 10],
+    ['SHORT\n10X', 'SHORT', 10],
+    ['SHORT\n10 X', 'SHORT', 10],
+  ])('extracts leverage from %s', (position, direction, leverage) => {
+    expect(normalizeExtractedText(`RARE/USDT\n${position}\nQty 0.015\nSize 1500\nMargin 150`).direction).toBe(direction)
+    expect(normalizeExtractedText(`RARE/USDT\n${position}\nQty 0.015\nSize 1500\nMargin 150`).leverage).toBe(leverage)
+  })
+
+  it('does not infer leverage from ordinary quantity, size, or margin numbers', () => {
+    expect(normalizeExtractedText('RARE/USDT\nSHORT\nQty 0.015\nSize 1500\nMargin 150').leverage).toBeUndefined()
+  })
+
   it('recognizes a RARE open transaction and its India-formatted timestamp without treating its fee as P&L', () => {
     const result = normalizeExtractedText(openScreenshotText)
     expect(result).toMatchObject({ screenshotType: 'OPEN_TRANSACTION', symbol: 'RARE/USDT', transactionId: '8567564' })

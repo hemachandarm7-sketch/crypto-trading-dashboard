@@ -91,13 +91,15 @@ export async function processScreenshot(
   }
 }
 
-export async function confirmManualExtraction(screenshot: Screenshot, data: ExtractedTradeData, selectedTradeId?: string): Promise<void> {
+export async function confirmManualExtraction(screenshot: Screenshot, data: ExtractedTradeData, selectedTradeId?: string): Promise<string | null> {
+  trace('[FORM CONFIRMED]', { screenshotId: screenshot.id, screenshotType: data.screenshotType, symbol: data.symbol, direction: data.direction, leverage: data.leverage })
   await updateScreenshot(screenshot.id, {
     screenshot_type: data.screenshotType, extracted_at: new Date().toISOString(), extraction_status: 'EXTRACTED',
     extraction_raw_data: toJsonObject(data), extraction_confidence: data.confidence ?? null,
   })
   const tradeId = await applyExtraction(screenshot.id, data, selectedTradeId)
   trace('[MATCH] result', tradeId ? { tradeId } : 'unmatched')
+  return tradeId
 }
 
 function toJsonObject(data: ExtractedTradeData): Record<string, string | number | boolean | null> {
@@ -194,7 +196,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
 
   const duplicateTradeId = await detectDuplicateTransaction(userId, data)
   if (duplicateTradeId) {
-    await client.from('screenshots').update({ trade_id: duplicateTradeId, extraction_status: 'COMPLETED' }).eq('id', screenshotId).eq('user_id', userId)
+    await updateScreenshot(screenshotId, { trade_id: duplicateTradeId, extraction_status: 'COMPLETED' })
     await recordEvent(screenshotId, duplicateTradeId, data, data.screenshotType === 'CLOSE_TRANSACTION' ? 'CLOSE' : eventTypeFor(data.screenshotType))
     return duplicateTradeId
   }
@@ -203,7 +205,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   if (matched && data.screenshotType !== 'PNL' && matched.status !== 'OPEN') matched = null
   const eventType: TradeEventType = eventTypeFor(data.screenshotType)
   if (data.screenshotType === 'UNKNOWN') {
-    await client.from('screenshots').update({ trade_id: null, extraction_status: 'EXTRACTED' }).eq('id', screenshotId).eq('user_id', userId)
+    await updateScreenshot(screenshotId, { trade_id: null, extraction_status: 'EXTRACTED' })
     return null
   }
   if (!matched && data.screenshotType === 'OPEN_TRANSACTION') matched = findDuplicateOpenTrade(trades, data)
@@ -268,16 +270,16 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
 
   const tradeId = matched?.id ?? null
   const eventKind: TradeEventType = data.screenshotType === 'CLOSE_TRANSACTION' ? 'CLOSE' : eventType
-  if (tradeId) await client.from('screenshots').update({ extraction_status: 'MATCHED' }).eq('id', screenshotId).eq('user_id', userId)
+  if (tradeId) await updateScreenshot(screenshotId, { extraction_status: 'MATCHED' })
   await recordEvent(screenshotId, tradeId, data, eventKind)
-  await client.from('screenshots').update({
+  await updateScreenshot(screenshotId, {
     trade_id: tradeId,
     extraction_status: tradeId ? 'COMPLETED' : 'EXTRACTED',
     screenshot_type: data.screenshotType,
     extracted_at: new Date().toISOString(),
     extraction_raw_data: toJsonObject(data),
     extraction_confidence: data.confidence ?? null,
-  }).eq('id', screenshotId).eq('user_id', userId)
+  })
   return tradeId
 }
 

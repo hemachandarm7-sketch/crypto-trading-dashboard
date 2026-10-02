@@ -52,6 +52,7 @@ export default function App() {
   const [analyticsRange, setAnalyticsRange] = useState('All Time')
   const [dragging, setDragging] = useState(false)
   const [working, setWorking] = useState(false)
+  const [success, setSuccess] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
@@ -59,15 +60,24 @@ export default function App() {
 
   const stats = useMemo(() => getAnalytics(trades), [trades])
   const positions = useMemo(() => trades.filter(trade => trade.status === 'OPEN'), [trades])
+  useEffect(() => {
+    if (import.meta.env.DEV) console.debug('[DASHBOARD METRICS]', { totalTrades: stats.totalTrades, openTrades: stats.openTrades, closedTrades: stats.closedTrades, totalInvestment: stats.totalInvestment, realizedPnl: stats.totalPnl })
+  }, [stats])
   const filteredTrades = useMemo(() => trades.filter(trade => {
     const matchesQuery = `${trade.symbol} ${trade.exchange ?? ''} ${trade.setup ?? ''}`.toLowerCase().includes(query.toLowerCase())
     return matchesQuery && (filterStatus === 'ALL' || trade.status === filterStatus) && (filterDirection === 'ALL' || trade.direction === filterDirection) && (filterExchange === 'ALL' || trade.exchange === filterExchange)
   }).sort((a, b) => (b.openTime ?? b.createdAt).localeCompare(a.openTime ?? a.createdAt)), [trades, query, filterStatus, filterDirection, filterExchange])
 
   const safeAction = async (action: () => Promise<void>) => {
-    setWorking(true); setError(null)
+    setWorking(true); setError(null); setSuccess(null)
     try { await action(); await refresh() }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'The requested change could not be saved.') }
+    catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'The requested change could not be saved.'
+      // A later lifecycle write (for example event history) can fail after the trade row committed.
+      // Refresh so the UI reflects the database state while still showing the failed operation.
+      try { await refresh() } catch { /* preserve the original write error */ }
+      setError(message)
+    }
     finally { setWorking(false) }
   }
   const saveTrade = async (draft: TradeDraft, existing?: Trade) => safeAction(async () => {
@@ -111,10 +121,19 @@ export default function App() {
     const data = await processScreenshot(screenshot, file, undefined, refresh)
     setReviewScreenshot({ ...screenshot, screenshotType: data.screenshotType, extractionStatus: 'EXTRACTED', extractionRawData: { ...data } })
   })
-  const manualExtraction = async (screenshot: Screenshot, data: ExtractedTradeData, tradeId?: string) => safeAction(async () => {
-    await confirmManualExtraction(screenshot, data, tradeId)
-    setReviewScreenshot(null)
-  })
+  const manualExtraction = async (screenshot: Screenshot, data: ExtractedTradeData, tradeId?: string) => {
+    setWorking(true); setError(null); setSuccess(null)
+    try {
+      const savedTradeId = await confirmManualExtraction(screenshot, data, tradeId)
+      await refresh()
+      setReviewScreenshot(null)
+      setSuccess(savedTradeId ? `Trade saved successfully (${data.symbol ?? 'trade'}).` : 'Screenshot saved. No matching trade was found, so no trade was created.')
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'The extracted data could not be saved.'
+      try { await refresh() } catch { /* preserve the original write error */ }
+      setError(message)
+    } finally { setWorking(false) }
+  }
   const changeSettings = async (next: UserSettings) => {
     setSettings(next)
     await safeAction(async () => { await saveUserSettings(next) })
@@ -131,6 +150,7 @@ export default function App() {
     <main className="main-area"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={20}/></button><div className="crumb"><span>Workspace</span><span className="crumb-slash">/</span><b>{page}</b></div><div className="top-actions"><span className="date-pill"><CalendarDays size={15}/>{new Date().toLocaleDateString('en-US',{month:'short',year:'numeric'})}</span><button className="icon-button" aria-label="Help"><CircleHelp size={18}/></button><span className="top-avatar">HT</span></div></header>
       <div className="page-content">
         {error && <div className="notice error-notice"><span><b>Workspace connection</b><small>{error}</small></span><button onClick={() => void refresh()}><Activity size={15}/>Retry</button></div>}
+        {success && <div className="notice success-notice" role="status"><span><b>Saved</b><small>{success}</small></span><button onClick={() => setSuccess(null)} aria-label="Dismiss success"><X size={15}/></button></div>}
         {loading && <div className="loading-bar"><span/></div>}
         {page === 'Dashboard' && <Dashboard trades={trades} positions={positions} stats={stats} now={now} onAdd={() => setTradeForm('new')} onTrades={() => setPage('Trades')} onDetail={setDetailTrade} currency={settings.currency}/>}
         {page === 'Trades' && <TradesPage trades={filteredTrades} allTrades={trades} query={query} setQuery={setQuery} status={filterStatus} setStatus={setFilterStatus} direction={filterDirection} setDirection={setFilterDirection} exchange={filterExchange} setExchange={setFilterExchange} onAdd={() => setTradeForm('new')} onEdit={setTradeForm} onDetail={setDetailTrade} onDelete={deleteTrade} now={now} currency={settings.currency}/>}

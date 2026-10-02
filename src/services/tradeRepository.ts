@@ -5,8 +5,18 @@ import type { Screenshot, Trade } from '../types'
 
 type TradeRow = Database['public']['Tables']['trades']['Row']
 type ScreenshotRow = Database['public']['Tables']['screenshots']['Row']
+type TradeInsertRow = Database['public']['Tables']['trades']['Insert']
 export type TradeDraft = Omit<Trade, 'id' | 'createdAt' | 'updatedAt'>
 export type TradeUpdate = Partial<TradeDraft>
+
+const trace = (...values: unknown[]) => { if (import.meta.env.DEV) console.debug(...values) }
+
+function databaseError(context: string, error: { message: string; code?: string; details?: string; hint?: string }): Error {
+  trace(`[${context}] error`, { code: error.code, message: error.message, details: error.details, hint: error.hint })
+  const code = error.code ? ` (${error.code})` : ''
+  const hint = error.hint ? ` Hint: ${error.hint}` : ''
+  return new Error(`${context}${code}: ${error.message}${hint}`)
+}
 
 export function mapTrade(row: TradeRow): Trade {
   return {
@@ -35,22 +45,31 @@ export async function listTrades(): Promise<Trade[]> {
   const [client, userId] = [requireSupabase(), await ensureSupabaseUser()]
   const { data, error } = await client.from('trades').select('*').eq('user_id', userId).order('open_time', { ascending: false, nullsFirst: false })
   if (error) throw error
+  trace('[TRADE FETCH]', { count: data?.length ?? 0 })
   return (data ?? []).map(mapTrade)
 }
 
 export async function insertTrade(draft: TradeDraft): Promise<Trade> {
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
-  const { data, error } = await client.from('trades').insert({ ...toTradeRow(draft), user_id: userId, symbol: draft.symbol, direction: draft.direction }).select('*').single()
-  if (error) throw error
+  const payload = mapFormToTradeInsert(draft, userId)
+  const safePayload = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'user_id'))
+  trace('[TRADE PAYLOAD]', safePayload)
+  trace('[SUPABASE INSERT]', { table: 'trades', requested: true })
+  const { data, error } = await client.from('trades').insert(payload).select('*').single()
+  if (error) throw databaseError('Supabase trade insert failed', error)
+  trace('[SUPABASE RESPONSE]', { operation: 'insert', id: data.id, status: data.status })
   return mapTrade(data)
 }
 
 export async function updateTrade(id: string, patch: TradeUpdate): Promise<Trade> {
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
-  const { data, error } = await client.from('trades').update(toTradeRow(patch)).eq('id', id).eq('user_id', userId).select('*').single()
-  if (error) throw error
+  const payload = toTradeRow(patch)
+  trace('[SUPABASE UPDATE]', { table: 'trades', id, payload })
+  const { data, error } = await client.from('trades').update(payload).eq('id', id).eq('user_id', userId).select('*').single()
+  if (error) throw databaseError('Supabase trade update failed', error)
+  trace('[SUPABASE RESPONSE]', { operation: 'update', id: data.id, status: data.status })
   return mapTrade(data)
 }
 
@@ -59,6 +78,40 @@ export async function removeTrade(id: string): Promise<void> {
   const userId = await ensureSupabaseUser()
   const { error } = await client.from('trades').delete().eq('id', id).eq('user_id', userId)
   if (error) throw error
+}
+
+export function mapFormToTradeInsert(trade: TradeDraft, userId: string): TradeInsertRow {
+  return {
+    user_id: userId,
+    trade_code: null,
+    symbol: trade.symbol,
+    exchange: trade.exchange,
+    market_type: trade.marketType,
+    direction: trade.direction,
+    leverage: trade.leverage,
+    quantity: trade.quantity,
+    size: trade.size,
+    margin: trade.margin,
+    avg_entry: trade.avgEntry,
+    ltp: trade.ltp,
+    liquidation_price: trade.liquidationPrice,
+    take_profit: trade.takeProfit,
+    stop_loss: trade.stopLoss,
+    open_time: trade.openTime,
+    close_time: trade.closeTime,
+    holding_duration_seconds: trade.holdingDurationSeconds,
+    holding_duration_display: trade.holdingDurationDisplay,
+    close_price: trade.closePrice,
+    pnl_amount: trade.pnlAmount,
+    pnl_percentage: trade.pnlPercentage,
+    status: trade.status,
+    close_reason: trade.closeReason,
+    setup: trade.setup,
+    notes: trade.notes,
+    exchange_position_id: trade.exchangePositionId,
+    open_transaction_id: trade.openTransactionId,
+    close_transaction_id: trade.closeTransactionId,
+  }
 }
 
 function toTradeRow(trade: Partial<TradeDraft>): Partial<TradeRow> {
@@ -200,10 +253,18 @@ export async function recordTradeEvent(input: {
     user_id: userId, trade_id: input.tradeId, event_type: input.eventType, event_time: input.eventTime ?? null,
     price: input.price ?? null, percentage: input.percentage ?? null, screenshot_id: input.screenshotId ?? null, raw_data: JSON.parse(JSON.stringify(input.rawData)) as Json,
   }
-  const { error } = input.screenshotId
-    ? await client.from('trade_events').upsert(event, { onConflict: 'user_id,screenshot_id,event_type' })
-    : await client.from('trade_events').insert(event)
-  if (error) throw error
+  if (input.screenshotId) {
+    const { data: existing, error: lookupError } = await client.from('trade_events').select('id')
+      .eq('user_id', userId).eq('screenshot_id', input.screenshotId).eq('event_type', input.eventType).maybeSingle()
+    if (lookupError) throw databaseError('Could not check for an existing trade event', lookupError)
+    if (existing) {
+      const { error } = await client.from('trade_events').update(event).eq('id', existing.id).eq('user_id', userId)
+      if (error) throw databaseError('Could not update the trade event', error)
+      return
+    }
+  }
+  const { error } = await client.from('trade_events').insert(event)
+  if (error) throw databaseError('Could not save the trade event', error)
 }
 
 export async function updateTradeFromExtraction(id: string, patch: TradeUpdate): Promise<Trade> {

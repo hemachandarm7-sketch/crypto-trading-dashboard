@@ -10,6 +10,7 @@ do $$ begin create type public.trade_event_type as enum ('OPEN', 'CLOSE', 'PNL',
 create table if not exists public.trades (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
+  trade_code text,
   symbol text not null,
   exchange text,
   market_type text,
@@ -47,6 +48,7 @@ create table if not exists public.trades (
 -- Nullable additions preserve any existing rows; new app writes supply user_id.
 alter table public.trades
   add column if not exists user_id uuid references auth.users(id) on delete cascade,
+  add column if not exists trade_code text,
   add column if not exists symbol text,
   add column if not exists exchange text,
   add column if not exists market_type text,

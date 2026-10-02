@@ -23,3 +23,12 @@
 .ocr-debug .notice { margin: 8px 0; padding: 8px; font-size: 10px; }
 .light .ocr-debug { background: #f6f9fb; }
 .light .ocr-debug pre { background: #fff; color: #263442; }
+.notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 16px; padding: 11px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.notice span { display: grid; gap: 3px; }
+.notice b { font-size: 12px; }
+.notice small { color: var(--muted-2); font-size: 11px; }
+.notice button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--muted-2); }
+.error-notice { border-color: color-mix(in srgb, var(--red) 50%, transparent); }
+.error-notice b { color: var(--red); }
+.success-notice { border-color: color-mix(in srgb, var(--green) 50%, transparent); }
+.success-notice b { color: var(--green); }
