@@ -8,11 +8,11 @@ import { mapExtractionToForm } from './services/extractionFormMapper'
 import './extraction-debug.css'
 import type { TradeDraft } from './services/tradeRepository'
 import { getTradeHoldingSeconds, formatDuration } from './services/tradeLifecycle'
-import { supabaseConfigured } from './services/supabaseClient'
+import { linkWorkspaceEmail, finishAccountSetup, requestPasswordReset, signOutAccount } from './services/supabaseClient'
 import { useSupabaseWorkspace } from './hooks/useSupabaseWorkspace'
+import { AccountGate, PasswordRecovery, SessionLoading } from './components/AccountScreens'
 import type { CloseReason, Direction, ExtractedTradeData, Screenshot, ScreenshotType, Trade, UserSettings } from './types'
 import { formatCurrencyUSD } from './utils/currency'
-import { linkWorkspaceEmail, sendWorkspaceSignIn } from './services/supabaseClient'
 
 type Page = 'Dashboard' | 'Trades' | 'Open Positions' | 'Upload Screenshot' | 'Analytics' | 'Settings'
 const navigation: { page: Page; icon: typeof LayoutDashboard }[] = [
@@ -150,25 +150,37 @@ export default function App() {
     setSettings(fixedCurrency)
     await safeAction(async () => { await saveUserSettings(fixedCurrency) })
   }
-  const connectWorkspace = async (email: string) => safeAction(async () => {
-    await sendWorkspaceSignIn(email)
-    setSuccess(`Sign-in link sent to ${email}. Open it on this device to connect to the same workspace.`)
+  const linkCurrentWorkspace = async (email: string, displayName: string) => safeAction(async () => {
+    await linkWorkspaceEmail(email, displayName)
+    setSuccess(`Confirmation email sent to ${email}. Open it on this device, then return to Settings to choose your password. Your existing trades stay with this account.`)
   })
-  const linkCurrentWorkspace = async (email: string) => safeAction(async () => {
-    await linkWorkspaceEmail(email)
-    setSuccess(`Confirmation email sent to ${email}. Confirm it on this device first; this preserves the existing trades.`)
+  const completeCurrentAccount = async (password: string) => safeAction(async () => {
+    await finishAccountSetup(password)
+    setSuccess('Account setup complete. Sign in with this email and password on your other devices.')
   })
+  const requestCurrentPasswordReset = async () => safeAction(async () => {
+    if (!identity?.email) throw new Error('This account does not have a confirmed email address yet.')
+    await requestPasswordReset(identity.email)
+    setSuccess(`Password reset link sent to ${identity.email}.`)
+  })
+  const logOut = async () => safeAction(async () => { await signOutAccount() })
+
+  if (workspace.passwordRecovery) return <PasswordRecovery onComplete={async () => { workspace.setPasswordRecovery(false); await refresh() }}/>
+  if (!identity) return loading ? <SessionLoading/> : <AccountGate onAuthenticated={refresh}/>
+
+  const profileName = identity.displayName || identity.email?.split('@')[0] || 'Account'
+  const initials = profileName.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || 'AC'
 
   return <div className={`app-shell ${settings.theme === 'light' ? 'light' : ''}`}>
     <aside className={`sidebar ${mobileNav ? 'mobile-open' : ''}`}>
       <div className="brand"><span className="brand-mark"><Bitcoin size={21}/></span><span>orbit<span className="brand-dot">.</span><small>TRADING JOURNAL</small></span></div>
       <div className="workspace-label">WORKSPACE <button aria-label="Workspace options"><MoreHorizontal size={17}/></button></div>
       <nav>{navigation.map(({ page: item, icon: Icon }) => <button key={item} className={`nav-item ${page === item ? 'active' : ''}`} onClick={() => { setPage(item); setMobileNav(false) }}><Icon size={18}/><span>{item}</span>{item === 'Open Positions' && <b className="nav-count">{positions.length}</b>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="plan-card"><div className="plan-icon"><Sparkles size={16}/></div><div><strong>Private workspace</strong><small>Supabase backed journal</small></div><ShieldCheck size={15}/></div><button className="profile"><span className="avatar">HT</span><span><b>Trading workspace</b><small>{supabaseConfigured ? 'Protected by row security' : 'Database not configured'}</small></span><MoreHorizontal size={17}/></button></div>
+      <div className="sidebar-bottom"><div className="plan-card"><div className="plan-icon"><Sparkles size={16}/></div><div><strong>Private workspace</strong><small>Shared across your devices</small></div><ShieldCheck size={15}/></div><button className="profile" onClick={() => setPage('Settings')}><span className="avatar">{initials}</span><span><b>{profileName}</b><small>{identity.isAnonymous ? 'Anonymous · link to sync devices' : identity.email}</small></span><MoreHorizontal size={17}/></button></div>
     </aside>
     {mobileNav && <button className="scrim" onClick={() => setMobileNav(false)} aria-label="Close navigation"/>}
     <nav className="mobile-bottom-nav" aria-label="Primary navigation">{mobileNavigation.map(({ page: item, icon: Icon }) => <button key={item} type="button" className={page === item ? 'active' : ''} aria-current={page === item ? 'page' : undefined} onClick={() => { setPage(item); setMobileNav(false) }}><Icon size={18}/><span>{item === 'Upload Screenshot' ? 'Upload' : item}</span></button>)}</nav>
-    <main className="main-area"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={20}/></button><div className="crumb"><span>Workspace</span><span className="crumb-slash">/</span><b>{page}</b></div><div className="top-actions"><span className="date-pill"><CalendarDays size={15}/>{new Date().toLocaleDateString('en-US',{month:'short',year:'numeric'})}</span><button className="icon-button" aria-label="Help"><CircleHelp size={18}/></button><span className="top-avatar">HT</span></div></header>
+    <main className="main-area"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={20}/></button><div className="crumb"><span>Workspace</span><span className="crumb-slash">/</span><b>{page}</b></div><div className="top-actions"><span className="date-pill"><CalendarDays size={15}/>{new Date().toLocaleDateString('en-US',{month:'short',year:'numeric'})}</span><button className="icon-button" aria-label="Help"><CircleHelp size={18}/></button><span className="top-avatar">{initials}</span></div></header>
       <div className="page-content">
         {error && <div className="notice error-notice"><span><b>Workspace connection</b><small>{error}</small></span><button onClick={() => void refresh()}><Activity size={15}/>Retry</button></div>}
         {success && <div className="notice success-notice" role="status"><span><b>Saved</b><small>{success}</small></span><button onClick={() => setSuccess(null)} aria-label="Dismiss success"><X size={15}/></button></div>}
@@ -178,7 +190,7 @@ export default function App() {
         {page === 'Open Positions' && <PositionsPage trades={positions} now={now} onAdd={() => setTradeForm('new')} onDetail={setDetailTrade} currency={settings.currency}/>}
         {page === 'Upload Screenshot' && <UploadPage screenshots={screenshots} trades={trades} dragging={dragging} setDragging={setDragging} inputRef={inputRef} cameraInputRef={cameraInputRef} onFiles={uploadFiles} onReview={setReviewScreenshot} onRetry={retryScreenshot} onDelete={shot => safeAction(() => deleteScreenshot(shot))} onAssociate={(shot, id) => safeAction(() => associateScreenshot(shot.id, id || null))} now={now}/>}
         {page === 'Analytics' && <AnalyticsPage trades={trades} stats={stats} range={analyticsRange} setRange={setAnalyticsRange} currency={settings.currency}/>}
-        {page === 'Settings' && <SettingsPage settings={settings} onSave={changeSettings} identity={identity} tradeCount={trades.length} onLinkWorkspace={linkCurrentWorkspace} onConnectWorkspace={connectWorkspace}/>}
+        {page === 'Settings' && <SettingsPage settings={settings} onSave={changeSettings} identity={identity} tradeCount={trades.length} onLinkWorkspace={linkCurrentWorkspace} onFinishAccount={completeCurrentAccount} onRequestReset={requestCurrentPasswordReset} onLogout={logOut}/>}
       </div>
     </main>
     {tradeForm && <TradeEditor trade={tradeForm === 'new' ? null : tradeForm} onClose={() => setTradeForm(null)} onSave={saveTrade} working={working}/>}
@@ -265,24 +277,50 @@ function PnlChart({ data }: { data:{date:string;pnl:number}[] }) {
   return <div className="small-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={data}><CartesianGrid stroke="#242c35" strokeDasharray="4 5" vertical={false}/><XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill:'#9aa5b3',fontSize:10}}/><YAxis tickFormatter={(value:number)=>formatCurrencyUSD(value)} axisLine={false} tickLine={false} tick={{fill:'#778391',fontSize:9}} width={38}/><Tooltip {...chartTooltip}/><Bar dataKey="pnl" radius={[5,5,0,0]}>{data.map((item,index)=><Cell key={index} fill={item.pnl>=0?'#55d69e':'#fa7180'}/>)}</Bar></BarChart></ResponsiveContainer></div>
 }
 
-function SettingsPage({ settings, onSave, identity, tradeCount, onLinkWorkspace, onConnectWorkspace }: {
-  settings:UserSettings; onSave:(next:UserSettings)=>Promise<void>; identity:{ id:string; email:string|null; isAnonymous:boolean }|null
-  tradeCount:number; onLinkWorkspace:(email:string)=>Promise<void>; onConnectWorkspace:(email:string)=>Promise<void>
+function SettingsPage({ settings, onSave, identity, tradeCount, onLinkWorkspace, onFinishAccount, onRequestReset, onLogout }: {
+  settings:UserSettings; onSave:(next:UserSettings)=>Promise<void>; identity:{ id:string; email:string|null; isAnonymous:boolean; displayName:string|null; accountSetupPending:boolean; emailConfirmed:boolean }
+  tradeCount:number; onLinkWorkspace:(email:string,displayName:string)=>Promise<void>; onFinishAccount:(password:string)=>Promise<void>; onRequestReset:()=>Promise<void>; onLogout:()=>Promise<void>
 }) {
   const [draft,setDraft]=useState(settings)
   const [email,setEmail]=useState('')
+  const [name,setName]=useState(identity.displayName??'')
+  const [password,setPassword]=useState('')
+  const [confirmPassword,setConfirmPassword]=useState('')
+  const [accountError,setAccountError]=useState<string|null>(null)
   useEffect(()=>setDraft(settings),[settings])
+  useEffect(()=>setName(identity.displayName??''),[identity.displayName])
   const patch=(value:Partial<UserSettings>)=>setDraft(current=>({...current,...value}))
+  const finishAccount=(event:React.FormEvent)=>{
+    event.preventDefault();setAccountError(null)
+    if(password.length<8){setAccountError('Use a password with at least 8 characters.');return}
+    if(password!==confirmPassword){setAccountError('The passwords do not match.');return}
+    void onFinishAccount(password).then(()=>{setPassword('');setConfirmPassword('')})
+  }
   return <><PageTitle eyebrow="SUPABASE PROFILE" title="Settings" description="Trading defaults and appearance are stored in your protected user settings row."/><div className="settings-layout"><section className="panel settings-panel"><div className="settings-heading"><span className="settings-icon"><SlidersHorizontal size={18}/></span><div><h2>Trading defaults</h2><p>Prefill fields when adding a trade.</p></div></div><SettingRow label="Default leverage" description="Default for new positions"><select value={draft.defaultLeverage} onChange={event=>patch({defaultLeverage:Number(event.target.value)})}>{[1,2,3,5,10,20,50].map(value=><option key={value}>{value}</option>)}</select></SettingRow><SettingRow label="Default exchange" description="Preferred trading venue"><select value={draft.defaultExchange} onChange={event=>patch({defaultExchange:event.target.value})}>{['Binance','Bybit','OKX','Coinbase','Other'].map(value=><option key={value}>{value}</option>)}</select></SettingRow><SettingRow label="Default market" description="Spot or derivatives"><select value={draft.defaultMarket} onChange={event=>patch({defaultMarket:event.target.value})}>{['Spot','Perpetual','Futures'].map(value=><option key={value}>{value}</option>)}</select></SettingRow><SettingRow label="Display currency" description="Portfolio values use USD"><b>USD ($)</b></SettingRow></section><section className="panel settings-panel"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18}/></span><div><h2>Appearance and analytics</h2><p>Preferences are stored with this Supabase identity.</p></div></div><SettingRow label="Color theme" description="Dark or light interface"><div className="segmented"><button className={draft.theme==='dark'?'chosen':''} onClick={()=>patch({theme:'dark'})}>Dark</button><button className={draft.theme==='light'?'chosen':''} onClick={()=>patch({theme:'light'})}>Light</button></div></SettingRow><SettingRow label="Default date range" description="Initial analytics filter"><select value={draft.defaultRange} onChange={event=>patch({defaultRange:event.target.value})}>{['Today','7 Days','30 Days','3 Months','6 Months','1 Year','All Time'].map(value=><option key={value}>{value}</option>)}</select></SettingRow><SettingRow label="Default analytics view" description="Preferred chart"><select value={draft.analyticsView} onChange={event=>patch({analyticsView:event.target.value})}>{['Equity curve','Daily P&L','Win vs loss'].map(value=><option key={value}>{value}</option>)}</select></SettingRow></section>
-    <section className="panel settings-panel"><div className="settings-heading"><span className="settings-icon"><Activity size={18}/></span><div><h2>Sync devices</h2><p>Connect the same Supabase identity on your phone and computer to share trades securely.</p></div></div>
-      {identity && !identity.isAnonymous && identity.email ? <p role="status">This device is connected as <b>{identity.email}</b>. Sign in with this email on your other devices.</p> : <>
-        <p>{tradeCount > 0 ? `This browser owns ${tradeCount} saved trade${tradeCount===1?'':'s'}. Link this identity first to preserve and share them.` : 'This browser has no saved trades. Sign in to the email linked from the device that owns your trades.'}</p>
-        <label className="workspace-email">Email address<input type="email" autoComplete="email" required placeholder="you@example.com" value={email} onChange={event=>setEmail(event.target.value)}/></label>
-        {tradeCount > 0 ? <Button disabled={!email.includes('@')} onClick={()=>void onLinkWorkspace(email)}>Link this workspace to email</Button> : <Button disabled={!email.includes('@')} onClick={()=>void onConnectWorkspace(email)}>Send sign-in link</Button>}
-        <small>Link the phone with existing trades first and confirm its email. Then enter that same email here to sign in. Your trade rows stay protected by Supabase RLS.</small>
+    <section className="panel settings-panel account-settings-panel"><div className="settings-heading"><span className="settings-icon"><Activity size={18}/></span><div><h2>Account and device sync</h2><p>Use one verified email and password on your phone, desktop, and other browsers.</p></div></div>
+      {identity.isAnonymous ? <>
+        <p>{tradeCount > 0 ? `This browser currently owns ${tradeCount} saved trade${tradeCount===1?'':'s'}. Upgrade this identity to keep those exact records and access them on other devices.` : 'Upgrade this private workspace to an account that you can use on all your devices.'}</p>
+        <form className="account-settings-form" onSubmit={event=>{event.preventDefault();void onLinkWorkspace(email,name)}}>
+          <label>Full name<input autoComplete="name" required value={name} onChange={event=>setName(event.target.value)} placeholder="Your name"/></label>
+          <label>Email address<input type="email" autoComplete="email" required value={email} onChange={event=>setEmail(event.target.value)} placeholder="you@example.com"/></label>
+          <button className="button button-primary" type="submit" disabled={!email.includes('@')||!name.trim()}><Check size={15}/> Link email and preserve this workspace</button>
+        </form>
+        <small>Supabase sends an email verification link. Open it on this same device, return here, then set a password. The existing Supabase user ID and its trade ownership are preserved.</small>
+      </> : identity.accountSetupPending ? identity.emailConfirmed ? <>
+        <p>Email verified for <b>{identity.email}</b>. Choose a password to finish setting up cross-device sign-in.</p>
+        {accountError&&<div className="account-message account-error" role="alert">{accountError}</div>}
+        <form className="account-settings-form" onSubmit={finishAccount}>
+          <label>Password<input type="password" minLength={8} autoComplete="new-password" required value={password} onChange={event=>setPassword(event.target.value)}/></label>
+          <label>Confirm password<input type="password" minLength={8} autoComplete="new-password" required value={confirmPassword} onChange={event=>setConfirmPassword(event.target.value)}/></label>
+          <button className="button button-primary" type="submit"><Check size={15}/> Finish account setup</button>
+        </form>
+      </> : <div className="account-message account-success" role="status">Verification is pending for {identity.email}. Open the confirmation email on this device. When verification completes, return here to set your password. Your existing trades remain attached to this workspace.</div> : <>
+        <p className="account-connected" role="status">Signed in as <b>{identity.email}</b>{identity.displayName?<> · {identity.displayName}</>:null}</p>
+        <div className="account-settings-actions"><Button secondary onClick={()=>void onRequestReset()}>Send password reset link</Button><Button secondary onClick={()=>void onLogout()}>Sign out</Button></div>
+        <small>Signing in with this same email and password on another device loads the same Supabase-owned trades. Signing out clears this device's session; it does not delete database records.</small>
       </>}
     </section>
-    <section className="panel privacy-note"><ShieldCheck size={19}/><div><b>Protected by row-level security</b><p>Device linking reuses the same Supabase user ID; it does not make data public or combine trades by symbol. Never add service-role keys to this client.</p></div></section><div className="settings-save"><Button onClick={()=>void onSave({...draft,currency:'USD'})}><Check size={15}/> Save settings</Button></div></div></>
+    <section className="panel privacy-note"><ShieldCheck size={19}/><div><b>Protected by row-level security</b><p>Trades stay associated with this account's Supabase user ID. This flow does not make data public, copy rows, or combine trades by symbol. Never add service-role keys to this client.</p></div></section><div className="settings-save"><Button onClick={()=>void onSave({...draft,currency:'USD'})}><Check size={15}/> Save settings</Button></div></div></>
 }
 function SettingRow({ label, description, children }: { label:string; description:string; children:React.ReactNode }) { return <div className="setting-row"><div><b>{label}</b><small>{description}</small></div>{children}</div> }
 

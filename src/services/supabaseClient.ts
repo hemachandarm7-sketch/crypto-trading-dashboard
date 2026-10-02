@@ -1,7 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database.types'
+import { mapWorkspaceIdentity, requireWorkspaceUserId, upgradeAnonymousIdentity, type WorkspaceIdentity } from './accountIdentity'
 
-export interface WorkspaceIdentity { id: string; email: string | null; isAnonymous: boolean }
+export type { WorkspaceIdentity } from './accountIdentity'
 
 const url = import.meta.env.VITE_SUPABASE_URL?.trim()
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
@@ -16,42 +17,62 @@ export function requireSupabase(): SupabaseClient<Database> {
   return supabase
 }
 
-/** Auth creates an isolated RLS identity; it is not an application login. Enable anonymous sign-ins in Supabase Auth. */
-let identityPromise: Promise<string> | null = null
-
+/** Return the current session owner. Never silently create a different workspace after logout. */
 export async function ensureSupabaseUser(): Promise<string> {
   const client = requireSupabase()
   const { data: current, error: sessionError } = await client.auth.getSession()
   if (sessionError) throw sessionError
-  if (current.session?.user.id) return current.session.user.id
-  identityPromise ??= client.auth.signInAnonymously().then(({ data, error }) => {
-    if (error) throw new Error(`Could not start a private workspace. Enable anonymous sign-ins in Supabase Auth. ${error.message}`)
-    if (!data.user) throw new Error('Supabase did not return a user identity.')
-    return data.user.id
-  }).finally(() => { identityPromise = null })
-  return identityPromise
+  return requireWorkspaceUserId(current.session)
 }
 
 export async function getWorkspaceIdentity(): Promise<WorkspaceIdentity | null> {
-  const { data, error } = await requireSupabase().auth.getUser()
+  const { data, error } = await requireSupabase().auth.getSession()
   if (error) throw error
-  const user = data.user
-  return user ? { id: user.id, email: user.email ?? null, isAnonymous: user.is_anonymous === true } : null
+  const user = data.session?.user
+  return user ? mapWorkspaceIdentity(user) : null
 }
 
 /** Add an email identity to this browser's anonymous user; Supabase retains its UUID and rows. */
-export async function linkWorkspaceEmail(email: string): Promise<void> {
+export async function linkWorkspaceEmail(email: string, displayName: string): Promise<void> {
   const client = requireSupabase()
-  await ensureSupabaseUser()
-  const { error } = await client.auth.updateUser({ email: email.trim() }, { emailRedirectTo: window.location.origin })
+  await upgradeAnonymousIdentity(client.auth, email, displayName, window.location.origin)
+}
+
+export async function signUpAccount(input: { displayName: string; email: string; password: string }): Promise<{ needsEmailConfirmation: boolean }> {
+  const client = requireSupabase()
+  const { data, error } = await client.auth.signUp({
+    email: input.email.trim(),
+    password: input.password,
+    options: { emailRedirectTo: `${window.location.origin}/?account=verified`, data: { full_name: input.displayName.trim() } },
+  })
+  if (error) throw error
+  return { needsEmailConfirmation: !data.session }
+}
+
+export async function signInAccount(email: string, password: string): Promise<void> {
+  const { error } = await requireSupabase().auth.signInWithPassword({ email: email.trim(), password })
   if (error) throw error
 }
 
-/** Send a one-time link for an already-linked workspace, never creating a new account. */
-export async function sendWorkspaceSignIn(email: string): Promise<void> {
-  const { error } = await requireSupabase().auth.signInWithOtp({
-    email: email.trim(),
-    options: { shouldCreateUser: false, emailRedirectTo: window.location.origin },
-  })
+export async function finishAccountSetup(password: string): Promise<void> {
+  const client = requireSupabase()
+  const identity = await getWorkspaceIdentity()
+  if (!identity || identity.isAnonymous || !identity.emailConfirmed) throw new Error('Confirm your email address on this device before setting a password.')
+  const { error } = await client.auth.updateUser({ password, data: { account_setup_pending: false } })
+  if (error) throw error
+}
+
+export async function requestPasswordReset(email: string): Promise<void> {
+  const { error } = await requireSupabase().auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}/?auth=recovery` })
+  if (error) throw error
+}
+
+export async function updateAccountPassword(password: string): Promise<void> {
+  const { error } = await requireSupabase().auth.updateUser({ password })
+  if (error) throw error
+}
+
+export async function signOutAccount(): Promise<void> {
+  const { error } = await requireSupabase().auth.signOut()
   if (error) throw error
 }
