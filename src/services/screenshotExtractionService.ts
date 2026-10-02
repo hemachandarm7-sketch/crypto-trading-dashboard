@@ -15,6 +15,8 @@ import { calculateSpotPnl, determineCloseReason, formatDuration, resolvePnlPerce
 import { ensureSupabaseUser, requireSupabase } from './supabaseClient'
 import type { Json } from '../types/database.types'
 import type { Trade, TradeEventType } from '../types'
+import { getInrToUsdRate } from './exchangeRateService'
+import { monetaryFields, type CurrencyCode } from '../utils/currency'
 
 export interface OCRResult { text: string; confidence?: number }
 export interface OCRProvider { extractText(file: File): Promise<OCRResult> }
@@ -75,7 +77,7 @@ export async function processScreenshot(
       screenshot_type: data.screenshotType,
       extracted_at: new Date().toISOString(),
       extraction_status: 'EXTRACTED',
-      extraction_raw_data: toJsonObject(data),
+      extraction_raw_data: toJsonObject(data) as unknown as Json,
       extraction_confidence: data.confidence ?? null,
     })
     trace('[MATCH] waiting for user confirmation; extraction has not been written to trades yet')
@@ -94,17 +96,50 @@ export async function processScreenshot(
 
 export async function confirmManualExtraction(screenshot: Screenshot, data: ExtractedTradeData, selectedTradeId?: string): Promise<string | null> {
   trace('[FORM CONFIRMED]', { screenshotId: screenshot.id, screenshotType: data.screenshotType, symbol: data.symbol, direction: data.direction, leverage: data.leverage })
+  data = await normalizeScreenshotCurrencies(data)
   await updateScreenshot(screenshot.id, {
     screenshot_type: data.screenshotType, extracted_at: new Date().toISOString(), extraction_status: 'EXTRACTED',
-    extraction_raw_data: toJsonObject(data), extraction_confidence: data.confidence ?? null,
+    extraction_raw_data: toJsonObject(data) as unknown as Json, extraction_confidence: data.confidence ?? null,
   })
   const tradeId = await applyExtraction(screenshot.id, data, selectedTradeId)
   trace('[MATCH] result', tradeId ? { tradeId } : 'unmatched')
   return tradeId
 }
 
-function toJsonObject(data: ExtractedTradeData): Record<string, string | number | boolean | null> {
-  return Object.fromEntries(Object.entries(data).map(([key, value]) => [key, value ?? null])) as Record<string, string | number | boolean | null>
+/** Convert only explicitly identified fiat values. Rate failures never prevent saving the screenshot/trade. */
+export async function normalizeScreenshotCurrencies(data: ExtractedTradeData): Promise<ExtractedTradeData> {
+  const normalized: ExtractedTradeData = { ...data, fieldCurrencies: { ...data.fieldCurrencies }, currencyAudit: { ...data.currencyAudit } }
+  const eventDate = data.eventTime ? new Date(data.eventTime) : new Date()
+  const localDate = Number.isFinite(eventDate.getTime()) ? eventDate : new Date()
+  const sourceDate = `${localDate.getFullYear()}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${String(localDate.getDate()).padStart(2, '0')}`
+  let inrRate: { rate: number; date: string } | null = null
+  for (const field of monetaryFields) {
+    const value = data[field]
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue
+    if (data.currencyAudit?.[field]) continue
+    const currency: CurrencyCode | undefined = data.fieldCurrencies?.[field]
+      ?? (data.symbol?.toUpperCase().includes('/USDT') ? 'USDT' : undefined)
+    // Unmarked currencies remain auditable in OCR raw text, and are never guessed into INR.
+    if (!currency) continue
+    let usdRate: number | null = currency === 'INR' ? null : 1
+    let rateDate: string | null = currency === 'INR' ? null : sourceDate
+    if (currency === 'INR') {
+      try {
+        inrRate ??= await getInrToUsdRate(sourceDate)
+        usdRate = inrRate.rate
+        rateDate = inrRate.date
+      } catch (error) {
+        trace('[CURRENCY] INR to USD rate unavailable; preserving original in screenshot metadata', error)
+      }
+    }
+    normalized.currencyAudit![field] = { originalValue: value, originalCurrency: currency, usdRate, rateDate }
+    normalized[field] = usdRate == null ? null : value * usdRate
+  }
+  return normalized
+}
+
+function toJsonObject(data: ExtractedTradeData): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(data)) as Record<string, unknown>
 }
 
 function toDraft(data: ExtractedTradeData) {
@@ -279,7 +314,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
     extraction_status: tradeId ? 'COMPLETED' : 'EXTRACTED',
     screenshot_type: data.screenshotType,
     extracted_at: new Date().toISOString(),
-    extraction_raw_data: toJsonObject(data),
+    extraction_raw_data: toJsonObject(data) as unknown as Json,
     extraction_confidence: data.confidence ?? null,
   })
   return tradeId

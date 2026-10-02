@@ -61,6 +61,8 @@ export interface ExtractedTradeData {
   marketType?: string
   rawText?: string
   confidence?: number | null
+  fieldCurrencies?: Partial<Record<import('../utils/currency').MonetaryField, import('../utils/currency').CurrencyCode>>
+  currencyAudit?: import('../utils/currency').CurrencyAudit
 }
 
 export interface Screenshot {

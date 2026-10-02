@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { normalizeExtractedText } from './screenshotTextParser'
+import { normalizeScreenshotCurrencies } from './screenshotExtractionService'
+import { getInrToUsdRate } from './exchangeRateService'
 import { findOpenTradeForClose, findOpenTradeForPositionDetails, findTradeForOpenTransaction, findUniqueOpenTrade } from './tradeMatchingService'
 import { determineCloseReason } from './tradeLifecycle'
 import type { ExtractedTradeData, Trade } from '../types'
+
+vi.mock('./exchangeRateService', () => ({ getInrToUsdRate: vi.fn(async () => ({ rate: 0.01136, date: '2026-10-02' })) }))
 
 const openScreenshotText = `Futures History USDT Futures
 Transaction Details
@@ -88,6 +92,52 @@ describe('exchange screenshot OCR normalization', () => {
       avgEntry: 0.0227, pnlAmount: 38.261, transactionId: 'd1754da',
     })
     expect(result.eventTime).toBe(new Date(2026, 8, 30, 1, 50, 24).toISOString())
+  })
+
+  it('extracts INR net P&L without mistaking it for an absent amount', () => {
+    const parsed = normalizeExtractedText('Transaction type Close\nMarket ABC / USD\nNet PNL -₹1,250.50 INR\nCreated At 02/10/2026 10:00 AM')
+    expect(parsed.pnlAmount).toBe(-1250.5)
+    expect(parsed.fieldCurrencies?.pnlAmount).toBe('INR')
+  })
+
+  it('keeps USDT position monetary fields normalized as USD 1:1', async () => {
+    const parsed = normalizeExtractedText(positionScreenshotText)
+    expect(parsed.fieldCurrencies).toMatchObject({ size: 'USDT', margin: 'USDT', avgEntry: 'USDT', takeProfit: 'USDT', stopLoss: 'USDT' })
+    const result = await normalizeScreenshotCurrencies(parsed)
+    expect(result.size).toBe(136.353)
+    expect(result.currencyAudit?.size).toMatchObject({ originalValue: 136.353, originalCurrency: 'USDT', usdRate: 1 })
+  })
+
+  it('converts INR monetary values using the event-date rate and retains original audit values', async () => {
+    const result = await normalizeScreenshotCurrencies({
+      screenshotType: 'PNL', eventTime: '2026-10-02T05:00:00.000Z', pnlAmount: 1000,
+      fieldCurrencies: { pnlAmount: 'INR' },
+    })
+    expect(result.pnlAmount).toBeCloseTo(11.36)
+    expect(result.currencyAudit?.pnlAmount).toEqual({ originalValue: 1000, originalCurrency: 'INR', usdRate: 0.01136, rateDate: '2026-10-02' })
+  })
+
+  it('does not change explicitly USD monetary values', async () => {
+    const result = await normalizeScreenshotCurrencies({ screenshotType: 'PNL', pnlAmount: 100, fieldCurrencies: { pnlAmount: 'USD' } })
+    expect(result.pnlAmount).toBe(100)
+    expect(result.currencyAudit?.pnlAmount?.usdRate).toBe(1)
+  })
+
+  it('keeps a confirmed conversion stable and does not convert it a second time', async () => {
+    const once = await normalizeScreenshotCurrencies({ screenshotType: 'PNL', pnlAmount: 1000, fieldCurrencies: { pnlAmount: 'INR' } })
+    vi.mocked(getInrToUsdRate).mockClear()
+    const twice = await normalizeScreenshotCurrencies(once)
+    expect(once.pnlAmount).toBeCloseTo(11.36)
+    expect(twice.pnlAmount).toBe(once.pnlAmount)
+    expect(twice.currencyAudit).toEqual(once.currencyAudit)
+    expect(getInrToUsdRate).not.toHaveBeenCalled()
+  })
+
+  it('allows confirmation to continue with missing normalized amount if the rate service fails', async () => {
+    vi.mocked(getInrToUsdRate).mockRejectedValueOnce(new Error('offline'))
+    const result = await normalizeScreenshotCurrencies({ screenshotType: 'PNL', pnlAmount: 1000, fieldCurrencies: { pnlAmount: 'INR' } })
+    expect(result.pnlAmount).toBeNull()
+    expect(result.currencyAudit?.pnlAmount).toEqual({ originalValue: 1000, originalCurrency: 'INR', usdRate: null, rateDate: null })
   })
 })
 

@@ -226,7 +226,7 @@ export async function associateScreenshot(screenshotId: string, tradeId: string 
   if (error) throw error
 }
 
-export const defaultUserSettings: UserSettings = { defaultLeverage: 3, defaultExchange: 'Binance', defaultMarket: 'Perpetual', currency: 'USDT', theme: 'dark', defaultRange: '30 Days', analyticsView: 'Equity curve' }
+export const defaultUserSettings: UserSettings = { defaultLeverage: 3, defaultExchange: 'Binance', defaultMarket: 'Perpetual', currency: 'USD', theme: 'dark', defaultRange: '30 Days', analyticsView: 'Equity curve' }
 
 export async function loadUserSettings(): Promise<UserSettings> {
   const client = requireSupabase()
@@ -234,13 +234,13 @@ export async function loadUserSettings(): Promise<UserSettings> {
   const { data, error } = await client.from('user_settings').select('*').eq('user_id', userId).maybeSingle()
   if (error) throw error
   if (!data) return defaultUserSettings
-  return { defaultLeverage: data.default_leverage, defaultExchange: data.default_exchange, defaultMarket: data.default_market, currency: data.currency, theme: data.theme, defaultRange: data.default_range, analyticsView: data.analytics_view }
+  return { defaultLeverage: data.default_leverage, defaultExchange: data.default_exchange, defaultMarket: data.default_market, currency: 'USD', theme: data.theme, defaultRange: data.default_range, analyticsView: data.analytics_view }
 }
 
 export async function saveUserSettings(settings: UserSettings): Promise<void> {
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
-  const { error } = await client.from('user_settings').upsert({ user_id: userId, default_leverage: settings.defaultLeverage, default_exchange: settings.defaultExchange, default_market: settings.defaultMarket, currency: settings.currency, theme: settings.theme, default_range: settings.defaultRange, analytics_view: settings.analyticsView })
+  const { error } = await client.from('user_settings').upsert({ user_id: userId, default_leverage: settings.defaultLeverage, default_exchange: settings.defaultExchange, default_market: settings.defaultMarket, currency: 'USD', theme: settings.theme, default_range: settings.defaultRange, analytics_view: settings.analyticsView })
   if (error) throw error
 }
 

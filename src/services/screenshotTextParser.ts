@@ -1,5 +1,6 @@
 import type { Direction, ExtractedTradeData, ScreenshotType } from '../types'
 import { parsePnlPercentage } from './tradeLifecycle'
+import { detectCurrency, type CurrencyCode, type MonetaryField } from '../utils/currency'
 
 function labeledNumber(text: string, label: string): number | undefined {
   const pattern = new RegExp('(?:^|\\n|\\b)' + label + '[ \\t]*(?:\\([^\\n)]*\\)[ \\t]*)?[:=#]?[ \\t]*[₹$]?[ \\t]*([+-]?[\\d,]+(?:\\.\\d+)?)', 'i')
@@ -106,6 +107,7 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const screenshotType = classify(text)
   const symbol = text.match(/\b(?:Symbol|Pair|Contract)\s*[:=#]?\s*([A-Z0-9]{2,}(?:\s*[/_-]\s*[A-Z0-9]{2,})?)/i)?.[1]
     ?? text.match(/\b([A-Z0-9]{2,}\s*\/\s*(?:USDT|USDC|USD|BTC|ETH))\b/i)?.[1]
+  const normalizedSymbol = extractSymbol(text) ?? symbol?.replace(/\s/g, '').replace(/_/g, '/').replace(/-/g, '/').toUpperCase()
   const side = text.match(/\b(?:Direction|Side|Position)\s*[:=#]?\s*(LONG|SHORT)\b/i)?.[1]
     ?? text.match(/\b(LONG|SHORT)\s+\d+(?:\.\d+)?\s*x\b/i)?.[1]
     ?? text.match(/\b(LONG|SHORT)\b/i)?.[1]
@@ -122,18 +124,39 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const stopLoss = labeledNumber(text, '(?:SL|Stop\\s*Loss)')
   const closePrice = labeledNumber(text, '(?:Close\\s*Price|Exit\\s*Price)')
   const transactionPrice = labeledNumber(text, '(?:Transaction\\s*Price|Price)')
-  const pnlAmount = screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' ? netUsdtPnl(text) : undefined
+  const pnlAmount = screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' ? netUsdtPnl(text) ?? netLocalPnl(text) : undefined
   const pnlPercentage = parsePnlPercentage(text)
   const transactionId = text.match(/\b(?:Transaction|Order|Trade)\s*(?:ID|No\.?|#)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
   const positionId = text.match(/\b(?:Position\s*ID|Position\s*No\.?|Contract\s*ID)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
   const exchange = text.match(/\b(?:Exchange|Platform)\s*[:=#]?\s*([A-Z][A-Z0-9_-]+)/i)?.[1]
   const marketType = text.match(/\b(Spot|Perpetual|Futures)\b/i)?.[1]
+  const fieldCurrencies: Partial<Record<MonetaryField, CurrencyCode>> = {}
+  const currencyCandidates: [MonetaryField, string][] = [
+    ['size', '\\bSize\\b'], ['margin', '\\bMargin\\b'], ['transactionPrice', '\\b(?:Transaction\\s+)?Price\\b'],
+    ['closePrice', '\\b(?:Close|Exit)\\s+Price\\b'], ['avgEntry', '\\b(?:Avg\\.?\\s*Entry|Average\\s*Entry|Entry\\s*Price)\\b'],
+    ['ltp', '\\b(?:LTP|Last\\s*Traded\\s*Price)\\b'], ['liquidationPrice', '\\b(?:Li[qg]\\.?\\s*Price|Liquidation\\s*Price)\\b'],
+    ['takeProfit', '\\b(?:TP|Take\\s*Profit)\\b'], ['stopLoss', '\\b(?:SL|Stop\\s*Loss)\\b'],
+    ['pnlAmount', '\\b(?:Net\\s+P(?:NL|&L)|P\\s*&\\s*L|Profit|Loss)\\b'],
+  ]
+  for (const [field, label] of currencyCandidates) {
+    const match = new RegExp(label, 'i').exec(text)
+    if (!match) continue
+    const context = text.slice(Math.max(0, match.index - 48), Math.min(text.length, match.index + match[0].length + 90))
+    const currency = detectCurrency(context)
+      ?? (normalizedSymbol?.toUpperCase().includes('/USDT') ? 'USDT' : null)
+      ?? detectCurrency(text)
+    if (currency) fieldCurrencies[field] = currency
+  }
+  if (screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL') {
+    if (pnlAmount != null && /Net\s+P(?:NL|&L)[\s\S]{0,100}?[+-]?\s*[₹$]?\s*[\d,.]+\s*USDT\b/i.test(text)) fieldCurrencies.pnlAmount = 'USDT'
+    else if (pnlAmount != null && !fieldCurrencies.pnlAmount) fieldCurrencies.pnlAmount = detectCurrency(text) ?? undefined
+  }
   return {
-    screenshotType, symbol: extractSymbol(text) ?? symbol?.replace(/\s/g, '').replace(/_/g, '/').replace(/-/g, '/').toUpperCase(), direction,
+    screenshotType, symbol: normalizedSymbol, direction,
     eventTime: parseOcrEventTime(text), closePrice, transactionPrice, leverage, quantity, size, margin, avgEntry, ltp,
     liquidationPrice, takeProfit, stopLoss, pnlAmount, pnlPercentage: pnlPercentage ?? undefined, transactionId, positionId, exchange,
     marketType: marketType?.toLowerCase() === 'spot' ? 'Spot' : marketType ? marketType[0].toUpperCase() + marketType.slice(1).toLowerCase() : undefined,
-    rawText: text, confidence,
+    rawText: text, confidence, fieldCurrencies,
   }
 }
 
@@ -143,4 +166,12 @@ function netUsdtPnl(text: string): number | undefined {
   if (!value) return undefined
   const amount = Number(value.replace(/[₹$\s,]/g, ''))
   return Number.isFinite(amount) ? amount : undefined
+}
+
+function netLocalPnl(text: string): number | undefined {
+  const section = text.match(/Net\s+P(?:NL|&L)([\s\S]{0,100})/i)?.[1]
+  const match = section?.match(/([+-]?)\s*[₹$]\s*([\d,]+(?:\.\d+)?)/)
+  if (!match) return undefined
+  const value = Number(match[2].replace(/,/g, ''))
+  return Number.isFinite(value) ? (match[1] === '-' ? -value : value) : undefined
 }

@@ -12,7 +12,7 @@
 - Open-position tracking with values from uploaded position screenshots (no live price feed).
 - Screenshot uploads use private Supabase Storage, hash deduplication, OCR review, and trade association.
 - Analytics for realized P&L, win rate, profit factor, drawdown, direction, and coin performance.
-- Supabase PostgreSQL with row-level security and an anonymous per-browser workspace. Tesseract.js performs English OCR in the browser. There is no exchange API, live pricing, or AI analysis.
+- Supabase PostgreSQL with row-level security. A new browser starts with an anonymous workspace; link its owner to an email in Settings to use that same protected workspace across devices. Tesseract.js performs English OCR in the browser. There is no exchange API, live pricing, or AI analysis.
 
 ## Screenshots
 
@@ -46,7 +46,7 @@ npm install
 npm run dev
 ```
 
-Vite prints the local URL (typically `http://localhost:5173`). Configure a root .env from .env.example with the Supabase project URL and publishable key. Apply supabase/migrations/001_initial_schema.sql and enable anonymous sign-ins in Supabase Auth. The project URL must not include /rest/v1. Screenshot OCR runs in the browser. The worker is bundled with the app; Tesseract downloads its English model (and WASM core) from its public CDN on first use.
+Vite prints the local URL (typically `http://localhost:5173`). Configure a root .env from .env.example with the Supabase project URL and publishable key. Apply the SQL migrations in order and enable anonymous sign-ins plus manual identity linking in Supabase Auth. To share data across devices, first open Settings on the device that already owns the trades, link its current workspace to an email, and confirm the email there. Then use that email's sign-in link on other devices. This preserves the existing user ID and its RLS-owned rows. The project URL must not include /rest/v1. Screenshot OCR runs in the browser. The worker is bundled with the app; Tesseract downloads its English model (and WASM core) from its public CDN on first use.
 
 ## Deploy to Vercel
 
@@ -57,7 +57,7 @@ VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
 ```
 
-Use the Supabase project URL and publishable/anon key only. Never add the service-role key. Apply the SQL migrations and enable the configured Supabase Auth provider before testing the deployed app. Browser OCR uses Tesseract.js and needs no OCR API key; first use downloads the English model and WASM core from the public CDN. `vercel.json` provides SPA route fallback.
+Use the Supabase project URL and publishable/anon key only. Never add the service-role key. Apply all SQL migrations and enable the configured Supabase Auth providers, anonymous sign-ins, and manual identity linking before testing the deployed app. `006_enable_workspace_realtime.sql` enables realtime table publication; focus, page navigation, and periodic revalidation still refresh data if publication has not yet been enabled. Browser OCR uses Tesseract.js and needs no OCR API key; first use downloads the English model and WASM core from the public CDN. `vercel.json` provides SPA route fallback.
 
 ## Build and checks
 
@@ -97,9 +97,8 @@ The UI uses a Supabase repository for trades, settings, screenshot metadata, and
 ## Roadmap
 
 1. Improve OCR coverage for more exchange layouts and add review for low-confidence results.
-2. Add quote-currency and local-currency conversion handling.
-3. Add authenticated accounts and import/export.
-4. Add opt-in exchange integrations and verified market prices.
+2. Add user-configurable account profiles and import/export.
+3. Add opt-in exchange integrations and verified market prices.
 
 ## License
 
