@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { normalizeExtractedText } from './screenshotTextParser'
-import { normalizeScreenshotCurrencies } from './screenshotExtractionService'
+import { extractScreenshot, findMarginValueCrop, normalizeScreenshotCurrencies } from './screenshotExtractionService'
 import { getInrToUsdRate } from './exchangeRateService'
 import { findOpenTradeForClose, findOpenTradeForPositionDetails, findTradeForOpenTransaction, findUniqueOpenTrade } from './tradeMatchingService'
 import { determineCloseReason } from './tradeLifecycle'
@@ -63,6 +63,34 @@ const rareShort: Trade = {
 }
 
 describe('exchange screenshot OCR normalization', () => {
+  it('maps a label-guided OCR Margin recovery into the review extraction', async () => {
+    const provider = { extractText: async () => ({
+      text: 'DEXE/USDT\nLong 7x\nQty (DEXE) Size (USDT) Margin (USDT)\n79.87 157.504 PARK]',
+      confidence: 0.8,
+      recoveredMargin: 23.433,
+    }) }
+    const extracted = await extractScreenshot({ name: 'position.png' } as File, provider)
+
+    expect(extracted).toMatchObject({ screenshotType: 'POSITION_DETAILS', symbol: 'DEXE/USDT', direction: 'LONG', leverage: 7, margin: 23.433 })
+  })
+
+  it('uses the recognized Margin label to target a missed numeric value cell', () => {
+    const box = (x0: number, y0: number, x1: number, y1: number) => ({ x0, y0, x1, y1 })
+    const crop = findMarginValueCrop([{
+      paragraphs: [{ lines: [
+        { text: 'Qty (DEXE) Size (USDT) Margin (USDT)', bbox: box(59, 584, 1019, 613), words: [
+          { text: 'Qty', bbox: box(59, 586, 105, 613) },
+          { text: 'Size', bbox: box(435, 586, 489, 607) },
+          { text: 'Margin', bbox: box(825, 586, 913, 613) },
+        ] },
+        { text: '79.87 157.504 PARK]', bbox: box(59, 639, 1020, 664), words: [] },
+        { text: 'Avg. Entry LTP Liq. Price', bbox: box(59, 708, 1021, 741), words: [] },
+      ] }],
+    }], 1080, 1083)
+
+    expect(crop).toEqual({ left: 807, top: 633, width: 213, height: 37 })
+  })
+
   it.each([
     ['LONG 10x', 'LONG', 10],
     ['SHORT 10x', 'SHORT', 10],

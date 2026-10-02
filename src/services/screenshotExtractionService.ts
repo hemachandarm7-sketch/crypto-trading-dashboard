@@ -18,12 +18,68 @@ import type { Trade, TradeEventType } from '../types'
 import { getInrToUsdRate } from './exchangeRateService'
 import { monetaryFields, type CurrencyCode } from '../utils/currency'
 
-export interface OCRResult { text: string; confidence?: number }
+export interface OCRResult { text: string; confidence?: number; recoveredMargin?: number }
 export interface OCRProvider { extractText(file: File): Promise<OCRResult> }
 export type OCRProviderFactory = () => OCRProvider | null
 
+interface OCRBox { x0: number; y0: number; x1: number; y1: number }
+interface OCRWord { text: string; bbox: OCRBox }
+interface OCRLine { text: string; bbox: OCRBox; words: OCRWord[] }
+interface OCRBlock { paragraphs: Array<{ lines: OCRLine[] }> }
+export interface MarginValueCrop { left: number; top: number; width: number; height: number }
+
+/** Locate the value row immediately below a recognized Margin label. */
+export function findMarginValueCrop(blocks: OCRBlock[], imageWidth: number, imageHeight: number): MarginValueCrop | null {
+  const nextSection = /\b(?:Qty|Quantity|Size|Margin|Avg\.?\s*Entry|Average\s*Entry|LTP|Last\s*Traded\s*Price|Li[qg]\.?(?:\s*Price)?|Liquidation\s*Price|TP|Take\s*Profit|SL|Stop\s*Loss)\b/i
+  for (const block of blocks) {
+    for (const paragraph of block.paragraphs) {
+      for (const [index, line] of paragraph.lines.entries()) {
+        const marginWord = line.words.find(word => /^margin$/i.test(word.text))
+        if (!marginWord || index + 1 >= paragraph.lines.length) continue
+        const valueLine = paragraph.lines[index + 1]
+        if (nextSection.test(valueLine.text) || valueLine.bbox.y0 < line.bbox.y1) continue
+        const rowHeight = Math.max(1, valueLine.bbox.y1 - valueLine.bbox.y0)
+        const padX = Math.max(18, Math.round((marginWord.bbox.x1 - marginWord.bbox.x0) * 0.2))
+        const padY = Math.max(6, Math.round(rowHeight * 0.25))
+        const left = Math.max(0, Math.floor(marginWord.bbox.x0 - padX))
+        const right = Math.min(imageWidth, Math.ceil(Math.max(valueLine.bbox.x1, marginWord.bbox.x1 + padX)))
+        const top = Math.max(0, Math.floor(valueLine.bbox.y0 - padY))
+        const bottom = Math.min(imageHeight, Math.ceil(valueLine.bbox.y1 + padY))
+        if (right <= left || bottom <= top) return null
+        return { left, top, width: right - left, height: bottom - top }
+      }
+    }
+  }
+  return null
+}
+
 let workerPromise: ReturnType<typeof createWorker> | null = null
 const trace = (...values: unknown[]) => { if (import.meta.env.DEV) console.debug(...values) }
+
+async function retryMarginInLabeledCell(file: File, blocks: OCRBlock[]): Promise<number | undefined> {
+  const bitmap = await createImageBitmap(file)
+  try {
+    const crop = findMarginValueCrop(blocks, bitmap.width, bitmap.height)
+    if (!crop) return undefined
+    const scale = 4
+    const canvas = document.createElement('canvas')
+    canvas.width = crop.width * scale
+    canvas.height = crop.height * scale
+    const context = canvas.getContext('2d')
+    if (!context) return undefined
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(bitmap, crop.left, crop.top, crop.width, crop.height, 0, 0, canvas.width, canvas.height)
+    const worker = await workerPromise
+    if (!worker) return undefined
+    const retry = await worker.recognize(canvas)
+    const rawValue = retry.data.text.match(/[+-]?\d[\d,]*(?:\.\d+)?/)?.[0]
+    const parsed = rawValue ? Number(rawValue.replace(/,/g, '')) : NaN
+    return Number.isFinite(parsed) ? parsed : undefined
+  } finally {
+    bitmap.close()
+  }
+}
 
 /** Tesseract performs OCR in the browser; it requires no cloud API key. */
 export const tesseractOCRProvider: OCRProvider = {
@@ -37,10 +93,22 @@ export const tesseractOCRProvider: OCRProvider = {
     try {
       const worker = await workerPromise
       trace('[OCR] provider called')
-      const result = await worker.recognize(file)
+      const result = await worker.recognize(file, {}, { text: true, blocks: true })
       trace('[OCR] raw text length', result.data.text.length)
       trace('[OCR] raw text', result.data.text)
-      return { text: result.data.text, confidence: result.data.confidence / 100 }
+      const parsed = normalizeExtractedText(result.data.text, result.data.confidence / 100)
+      if (parsed.screenshotType === 'POSITION_DETAILS' && parsed.margin == null && result.data.blocks) {
+        try {
+          const margin = await retryMarginInLabeledCell(file, result.data.blocks)
+          if (margin != null) {
+            parsed.margin = margin
+            trace('[OCR] recovered Margin from label-guided crop', margin)
+          }
+        } catch (error) {
+          trace('[OCR] label-guided Margin retry failed', error)
+        }
+      }
+      return { text: result.data.text, confidence: result.data.confidence / 100, ...(parsed.margin != null ? { recoveredMargin: parsed.margin } : {}) }
     } catch (error) {
       workerPromise = null
       throw error
@@ -57,6 +125,7 @@ export async function extractScreenshot(file: File, provider: OCRProvider | null
   if (!result.text.trim()) throw new Error('The OCR provider returned no readable text. Review this screenshot and enter the fields manually.')
   trace('[EXTRACT] started')
   const normalized = normalizeExtractedText(result.text, result.confidence)
+  if (result.recoveredMargin != null) normalized.margin = result.recoveredMargin
   trace('[EXTRACT] screenshot type', normalized.screenshotType)
   trace('[EXTRACT] normalized result', normalized)
   return normalized
