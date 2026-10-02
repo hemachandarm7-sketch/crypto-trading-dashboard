@@ -23,6 +23,8 @@ describe('mapExtractionToForm', () => {
     expect(result.values.closePrice).toBe('')
     expect(result.values.pnlAmount).toBe('')
     expect(result.values.pnlPercentage).toBe('')
+    expect(result.values.grossPnlAmount).toBe('')
+    expect(result.values.feeAmount).toBe('')
   })
 
   it('keeps absent symbol and direction empty instead of showing fake extracted values', () => {
@@ -31,6 +33,7 @@ describe('mapExtractionToForm', () => {
       values: {
         transactionPrice: '', closePrice: '', leverage: '', quantity: '', size: '', margin: '',
         avgEntry: '', ltp: '', liquidationPrice: '', takeProfit: '', stopLoss: '', pnlAmount: '', pnlPercentage: '',
+        grossPnlAmount: '', feeAmount: '', entryNotional: '',
       },
     })
   })

@@ -13,6 +13,9 @@ function timeDistance(a: string | null, b: string | null | undefined) {
   const distance = Math.abs(Date.parse(a) - Date.parse(b))
   return Number.isFinite(distance) ? distance : null
 }
+function valuesMatch(a: number | null | undefined, b: number | null | undefined, ratio = 0.02) {
+  return a == null || b == null || Math.abs(a - b) <= Math.max(1e-9, Math.abs(a) * ratio)
+}
 
 /** Find a strong identity match only. Same-symbol trades are never merged by symbol alone. */
 export function findOpenTradeForPositionDetails(trades: Trade[], data: ExtractedTradeData): Trade | null {
@@ -21,12 +24,21 @@ export function findOpenTradeForPositionDetails(trades: Trade[], data: Extracted
   const candidates = trades.filter(trade => trade.status === 'OPEN'
     && normalizeSymbol(trade.symbol) === symbol
     && (!data.direction || trade.direction === data.direction)
-    && sameExchange(trade, data))
+    && sameExchange(trade, data)
+    && (data.leverage == null || trade.leverage == null || data.leverage === trade.leverage)
+    && valuesMatch(data.quantity, trade.quantity)
+    && valuesMatch(data.avgEntry ?? data.transactionPrice, trade.avgEntry))
   if (data.positionId) {
     const exact = candidates.filter(trade => trade.exchangePositionId === data.positionId)
     return exact.length === 1 ? exact[0] : null
   }
-  return candidates.length === 1 ? candidates[0] : null
+  // Do not associate a details screenshot to a trade solely by coin/side.
+  const hasPositionEvidence = (trade: Trade) =>
+    (data.quantity != null && trade.quantity != null)
+    || ((data.avgEntry ?? data.transactionPrice) != null && trade.avgEntry != null)
+    || (data.leverage != null && trade.leverage != null)
+  const corroborated = candidates.filter(hasPositionEvidence)
+  return corroborated.length === 1 ? corroborated[0] : null
 }
 
 export function findDuplicateOpenTrade(trades: Trade[], data: ExtractedTradeData): Trade | null {
@@ -123,15 +135,31 @@ export function findTradeForPnl(trades: Trade[], data: ExtractedTradeData): Trad
   if (!symbol) return null
   let candidates = trades.filter(trade => normalizeSymbol(trade.symbol) === symbol
     && (!data.direction || trade.direction === data.direction)
-    && sameExchange(trade, data))
+    && sameExchange(trade, data)
+    && (data.leverage == null || trade.leverage == null || data.leverage === trade.leverage)
+    && valuesMatch(data.avgEntry ?? data.transactionPrice, trade.avgEntry))
   if (data.positionId) {
     const exact = candidates.filter(trade => trade.exchangePositionId === data.positionId)
     if (exact.length === 1) return exact[0]
     if (exact.length > 1) return null
   }
   if (data.eventTime) {
-    candidates = candidates.filter(trade => !trade.openTime || Date.parse(trade.openTime) <= Date.parse(data.eventTime!))
-      .sort((a, b) => (timeDistance(a.openTime, data.eventTime) ?? Infinity) - (timeDistance(b.openTime, data.eventTime) ?? Infinity))
+    candidates = candidates.filter(trade => {
+      const distanceToOpen = timeDistance(trade.openTime, data.eventTime)
+      const distanceToClose = timeDistance(trade.closeTime, data.eventTime)
+      return (distanceToOpen != null && distanceToOpen <= 10 * 60_000)
+        || (distanceToClose != null && distanceToClose <= 10 * 60_000)
+    }).sort((a, b) => Math.min(timeDistance(a.openTime, data.eventTime) ?? Infinity, timeDistance(a.closeTime, data.eventTime) ?? Infinity)
+      - Math.min(timeDistance(b.openTime, data.eventTime) ?? Infinity, timeDistance(b.closeTime, data.eventTime) ?? Infinity))
+  } else {
+    // Without IDs or a timestamp, require matching entry price as well as a
+    // unique active trade. Symbol/side/leverage alone can describe repetitions.
+    candidates = candidates.filter(trade => trade.status === 'OPEN')
   }
-  return candidates.length === 1 || (data.eventTime && candidates.length > 1 && timeDistance(candidates[0].openTime, data.eventTime) !== timeDistance(candidates[1].openTime, data.eventTime)) ? candidates[0] : null
+  const hasStrongEvidence = (trade: Trade) => Boolean(data.positionId || data.transactionId)
+    || (data.eventTime != null && ((timeDistance(trade.openTime, data.eventTime) ?? Infinity) <= 10 * 60_000
+      || (timeDistance(trade.closeTime, data.eventTime) ?? Infinity) <= 10 * 60_000))
+    || ((data.avgEntry ?? data.transactionPrice) != null && trade.avgEntry != null && data.leverage != null && data.leverage === trade.leverage)
+  const corroborated = candidates.filter(hasStrongEvidence)
+  return corroborated.length === 1 ? corroborated[0] : null
 }

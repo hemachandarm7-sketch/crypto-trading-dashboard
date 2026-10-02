@@ -3,6 +3,13 @@ export type TradeStatus = 'OPEN' | 'CLOSED'
 export type CloseReason = 'TP_HIT' | 'SL_HIT' | 'MANUAL_CLOSE' | 'UNKNOWN'
 export type ScreenshotType = 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
 export type ExtractionStatus = 'UPLOADED' | 'PROCESSING' | 'EXTRACTED' | 'MATCHED' | 'COMPLETED' | 'FAILED'
+export type ExtractionFieldSource = 'direct_ocr' | 'calculated' | 'estimated' | 'user_corrected'
+export interface ExtractionFieldProvenance {
+  source: ExtractionFieldSource
+  formula?: string
+  inputs?: Record<string, number | string | null>
+  requiresConfirmation?: boolean
+}
 
 export interface Trade {
   id: string
@@ -54,13 +61,18 @@ export interface ExtractedTradeData {
   takeProfit?: number | null
   stopLoss?: number | null
   pnlAmount?: number | null
+  grossPnlAmount?: number | null
+  feeAmount?: number | null
+  entryNotional?: number | null
   pnlPercentage?: number | null
   transactionId?: string
   positionId?: string
   exchange?: string
   marketType?: string
+  marginMode?: 'ISOLATED' | 'CROSS'
   rawText?: string
   confidence?: number | null
+  fieldProvenance?: Record<string, ExtractionFieldProvenance>
   fieldCurrencies?: Partial<Record<import('../utils/currency').MonetaryField, import('../utils/currency').CurrencyCode>>
   currencyAudit?: import('../utils/currency').CurrencyAudit
 }

@@ -12,6 +12,53 @@ function labeledNumber(text: string, label: string): number | undefined {
   return labeledGridNumber(text, label)
 }
 
+function labeledAmount(text: string, label: string): number | undefined {
+  const usdtValue = labeledUsdtAmount(text, label)
+  if (usdtValue != null) return usdtValue
+  const direct = new RegExp('(?:^|\\n|\\b)' + label + '[ \\t]*(?:\\([^\\n)]*\\)[ \\t]*)?[:=#]?[ \\t]*[₹$]?[ \\t]*([+-]?[\\d,]+(?:\\.\\d+)?)', 'i').exec(text)?.[1]
+  if (direct) {
+    const value = Number(direct.replace(/,/g, ''))
+    if (Number.isFinite(value)) return value
+  }
+
+  const lines = text.split(/\r?\n/)
+  const nextMetric = /\b(?:Net\s+P(?:NL|&L)|Gross\s+P(?:NL|&L)|Fees?|Profit\s*%|Loss\s*%|Entry\s+Price|Close\s+Price|Created\s+At)\b/i
+  for (const [index, line] of lines.entries()) {
+    if (!new RegExp(label, 'i').test(line) || index + 1 >= lines.length) continue
+    for (let valueIndex = index + 1; valueIndex < lines.length; valueIndex++) {
+      const candidate = lines[valueIndex].trim()
+      if (!candidate) continue
+      if (nextMetric.test(candidate)) break
+      const value = candidate.match(/[+-]?\s*[₹$]?\s*\d[\d,]*(?:\.\d+)?/)?.[0]
+      if (value) {
+        const parsed = Number(value.replace(/[₹$\s,]/g, ''))
+        if (Number.isFinite(parsed)) return parsed
+      }
+      if (/[A-Za-z]/.test(candidate) && !/\b(?:USDT|USD|INR|Rs\.?)\b/i.test(candidate)) break
+    }
+  }
+  return undefined
+}
+
+function labeledUsdtAmount(text: string, label: string): number | undefined {
+  const lines = text.split(/\r?\n/)
+  const nextMetric = /^\s*(?:Net\s+P(?:NL|&L)|Gross\s+P(?:NL|&L)|Fees?|Profit\s*%|Loss\s*%|Entry\s+Price|Close\s+Price|Created\s+At)\b/i
+  for (let index = 0; index < lines.length; index++) {
+    if (!new RegExp(label, 'i').test(lines[index])) continue
+    const parts = [lines[index]]
+    for (let next = index + 1; next < lines.length && next <= index + 3; next++) {
+      if (nextMetric.test(lines[next])) break
+      parts.push(lines[next])
+    }
+    const match = parts.join(' ').match(/([+-]?\s*[₹$]?\s*\d[\d,]*(?:\.\d+)?)\s*USDT\b/i)
+    if (match) {
+      const value = Number(match[1].replace(/[₹$\s,]/g, ''))
+      if (Number.isFinite(value)) return value
+    }
+  }
+  return undefined
+}
+
 /** Accept only an explicit multiplier or an explicitly labelled leverage value. */
 function extractLeverage(text: string): number | undefined {
   const normalized = text.normalize('NFKC').replace(/[×]/g, 'x').replace(/\s+/g, ' ').trim()
@@ -114,7 +161,7 @@ function isoEventTime(text: string): string | undefined {
 function classify(text: string): ScreenshotType {
   const explicitTransaction = text.match(/Transaction\s+type\s*[:#]?\s*(Open|Close)\b/i)?.[1]
   if (explicitTransaction) return explicitTransaction.toLowerCase() === 'open' ? 'OPEN_TRANSACTION' : 'CLOSE_TRANSACTION'
-  if (/\b(?:Profit\s*%|Loss\s*%|P\s*&\s*L|Net\s+P(?:NL|&L)|Realized\s+Pnl)\b/i.test(text)) return 'PNL'
+  if (/\b(?:Profit\s*%|Loss\s*%|P\s*&\s*L|(?:Net|Gross)\s+P(?:NL|&L)|Fees?|Realized\s+Pnl)\b/i.test(text)) return 'PNL'
   if (/\b(?:Qty|Quantity)\b|\bSize\s*\(|\bMargin\s*\(|\bLeverage\b|\bAvg\.?\s*Entry\b|\bLiq\.?\s*Price\b|\bLiquidation\s*Price\b/i.test(text)) return 'POSITION_DETAILS'
   const hasOpen = /\bopen\b/i.test(text)
   const hasClose = /\bclose\b/i.test(text)
@@ -162,12 +209,15 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const stopLoss = labeledNumber(text, '(?:SL|Stop\\s*Loss)')
   const closePrice = labeledNumber(text, '(?:Close\\s*Price|Exit\\s*Price)')
   const transactionPrice = labeledNumber(text, '(?:Transaction\\s*Price|Price)')
+  const grossPnlAmount = labeledAmount(text, 'Gross\\s+P(?:NL|&L)')
+  const feeAmount = labeledAmount(text, 'Fees?')
   const pnlAmount = screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' ? netUsdtPnl(text) ?? netLocalPnl(text) : undefined
   const pnlPercentage = parsePnlPercentage(text)
   const transactionId = text.match(/\b(?:Transaction|Order|Trade)\s*(?:ID|No\.?|#)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
   const positionId = text.match(/\b(?:Position\s*ID|Position\s*No\.?|Contract\s*ID)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
   const exchange = text.match(/\b(?:Exchange|Platform)\s*[:=#]?\s*([A-Z][A-Z0-9_-]+)/i)?.[1]
   const marketType = text.match(/\b(Spot|Perpetual|Futures)\b/i)?.[1]
+  const marginMode = text.match(/\b(Isolated|Cross)\b/i)?.[1]?.toUpperCase() as 'ISOLATED' | 'CROSS' | undefined
   const fieldCurrencies: Partial<Record<MonetaryField, CurrencyCode>> = {}
   const currencyCandidates: [MonetaryField, string][] = [
     ['size', '\\bSize\\b'], ['margin', '\\bMargin(?:\\s+Used)?\\b'], ['transactionPrice', '\\b(?:Transaction\\s+)?Price\\b'],
@@ -175,6 +225,7 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
     ['ltp', '\\b(?:LTP|Last\\s*Traded\\s*Price)\\b'], ['liquidationPrice', '\\b(?:Li[qg]\\.?\\s*Price|Liquidation\\s*Price)\\b'],
     ['takeProfit', '\\b(?:TP|Take\\s*Profit)\\b'], ['stopLoss', '\\b(?:SL|Stop\\s*Loss)\\b'],
     ['pnlAmount', '\\b(?:Net\\s+P(?:NL|&L)|P\\s*&\\s*L|Profit|Loss)\\b'],
+    ['grossPnlAmount', '\\bGross\\s+P(?:NL|&L)\\b'], ['feeAmount', '\\bFees?\\b'],
   ]
   for (const [field, label] of currencyCandidates) {
     const match = new RegExp(label, 'i').exec(text)
@@ -186,7 +237,8 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
     const nextValueLine = /\b(?:Qty|Quantity|Size|Margin(?: Used)?|Avg\.?\s*Entry|Average\s*Entry|LTP|Last\s*Traded\s*Price|Li[qg]\.?\s*Price|Liquidation\s*Price|TP|Take\s*Profit|SL|Stop\s*Loss|Net\s+P(?:NL|&L))\b/i.test(nextLine) ? '' : nextLine
     // Keep currency detection close to this label/value pair. A broad text
     // window can accidentally borrow INR from an unrelated P&L line.
-    const currency = detectCurrency(labelLine)
+    const labelIsUsdtPnl = (field === 'grossPnlAmount' || field === 'feeAmount') && labeledUsdtAmount(text, label) != null
+    const currency = labelIsUsdtPnl ? 'USDT' : detectCurrency(labelLine)
       ?? detectCurrency(nextValueLine)
       ?? (normalizedSymbol?.toUpperCase().includes('/USDT') ? 'USDT' : null)
     if (currency) fieldCurrencies[field] = currency
@@ -195,12 +247,17 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
     if (pnlAmount != null && /Net\s+P(?:NL|&L)[\s\S]{0,100}?[+-]?\s*[₹$]?\s*[\d,.]+\s*USDT\b/i.test(text)) fieldCurrencies.pnlAmount = 'USDT'
     else if (pnlAmount != null && !fieldCurrencies.pnlAmount) fieldCurrencies.pnlAmount = detectCurrency(text) ?? undefined
   }
+  const fieldProvenance = Object.fromEntries(Object.entries({
+    symbol: normalizedSymbol, direction, eventTime: parseOcrEventTime(text), transactionPrice, closePrice,
+    leverage, quantity, size, margin, avgEntry, ltp, liquidationPrice, takeProfit, stopLoss,
+    pnlAmount, grossPnlAmount, feeAmount, pnlPercentage: pnlPercentage ?? undefined,
+  }).filter(([, value]) => value != null).map(([field]) => [field, { source: 'direct_ocr' as const }]))
   return {
     screenshotType, symbol: normalizedSymbol, direction,
     eventTime: parseOcrEventTime(text), closePrice, transactionPrice, leverage, quantity, size, margin, avgEntry, ltp,
-    liquidationPrice, takeProfit, stopLoss, pnlAmount, pnlPercentage: pnlPercentage ?? undefined, transactionId, positionId, exchange,
+    liquidationPrice, takeProfit, stopLoss, pnlAmount, grossPnlAmount, feeAmount, pnlPercentage: pnlPercentage ?? undefined, transactionId, positionId, exchange,
     marketType: marketType?.toLowerCase() === 'spot' ? 'Spot' : marketType ? marketType[0].toUpperCase() + marketType.slice(1).toLowerCase() : undefined,
-    rawText: text, confidence, fieldCurrencies,
+    marginMode, rawText: text, confidence, fieldCurrencies, fieldProvenance,
   }
 }
 

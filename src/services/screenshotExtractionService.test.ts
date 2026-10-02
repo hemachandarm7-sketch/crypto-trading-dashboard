@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { normalizeExtractedText } from './screenshotTextParser'
 import { extractScreenshot, findMarginValueCrop, normalizeScreenshotCurrencies } from './screenshotExtractionService'
 import { getInrToUsdRate } from './exchangeRateService'
-import { findOpenTradeForClose, findOpenTradeForPositionDetails, findTradeForOpenTransaction, findUniqueOpenTrade } from './tradeMatchingService'
+import { findOpenTradeForClose, findOpenTradeForPositionDetails, findTradeForOpenTransaction, findTradeForPnl, findUniqueOpenTrade } from './tradeMatchingService'
 import { determineCloseReason } from './tradeLifecycle'
+import { calibrateMaintenanceMargin, deriveLiquidationPrice, mergeTradeEvidence, reconstructTradeEvidence } from './tradeReconstruction'
 import type { ExtractedTradeData, Trade } from '../types'
 
 vi.mock('./exchangeRateService', () => ({ getInrToUsdRate: vi.fn(async () => ({ rate: 0.01136, date: '2026-10-02' })) }))
@@ -72,6 +73,7 @@ describe('exchange screenshot OCR normalization', () => {
     const extracted = await extractScreenshot({ name: 'position.png' } as File, provider)
 
     expect(extracted).toMatchObject({ screenshotType: 'POSITION_DETAILS', symbol: 'DEXE/USDT', direction: 'LONG', leverage: 7, margin: 23.433 })
+    expect(extracted.fieldProvenance?.margin?.source).toBe('direct_ocr')
   })
 
   it('uses the recognized Margin label to target a missed numeric value cell', () => {
@@ -178,6 +180,110 @@ describe('exchange screenshot OCR normalization', () => {
       avgEntry: 0.0227, pnlAmount: 38.261, transactionId: 'd1754da',
     })
     expect(result.eventTime).toBe(new Date(2026, 8, 30, 1, 50, 24).toISOString())
+  })
+
+  it('extracts separate gross P&L and fees from the WLD transaction evidence', () => {
+    const parsed = normalizeExtractedText([
+      'Market WLD • USDT', 'LONG 10x', 'Loss % -19.63%', 'Entry Price 0.558', 'Close Price 0.547',
+      'Gross PNL -2.101 USDT', 'Net PNL -2.163 USDT', 'Fees 0.062 USDT',
+    ].join('\n'))
+    expect(parsed).toMatchObject({
+      screenshotType: 'PNL', symbol: 'WLD/USDT', direction: 'LONG', leverage: 10,
+      avgEntry: 0.558, closePrice: 0.547, grossPnlAmount: -2.101, pnlAmount: -2.163,
+      feeAmount: 0.062, pnlPercentage: -19.63,
+    })
+    expect(parsed.fieldCurrencies).toMatchObject({ grossPnlAmount: 'USDT', pnlAmount: 'USDT', feeAmount: 'USDT' })
+  })
+
+  it('prefers the explicit USDT equivalent when a transaction screenshot also shows rupees', async () => {
+    const parsed = normalizeExtractedText([
+      'Market RARE • USDT', 'Transaction type Close', 'Gross PNL', '₹3,856.92', '38.347 USDT',
+      'Fees', '₹8.60', '0.085 USDT', 'Net PNL', '₹3,848.32', '38.261 USDT',
+    ].join('\n'))
+    expect(parsed.grossPnlAmount).toBe(38.347)
+    expect(parsed.feeAmount).toBe(0.085)
+    expect(parsed.pnlAmount).toBe(38.261)
+    expect(parsed.fieldCurrencies).toMatchObject({ grossPnlAmount: 'USDT', feeAmount: 'USDT', pnlAmount: 'USDT' })
+    vi.mocked(getInrToUsdRate).mockClear()
+    const normalized = await normalizeScreenshotCurrencies(parsed)
+    expect(normalized.grossPnlAmount).toBe(38.347)
+    expect(normalized.feeAmount).toBe(0.085)
+    expect(normalized.pnlAmount).toBe(38.261)
+    expect(getInrToUsdRate).not.toHaveBeenCalled()
+  })
+
+  it('reconstructs only missing WLD values using gross ROI and close valuation', () => {
+    const parsed = normalizeExtractedText([
+      'Market WLD • USDT', 'LONG 10x', 'Loss % -19.63%', 'Entry Price 0.558', 'Close Price 0.547',
+      'Gross PNL -2.101 USDT', 'Net PNL -2.163 USDT', 'Fees 0.062 USDT',
+    ].join('\n'))
+    const combined = mergeTradeEvidence([parsed, {
+      screenshotType: 'CLOSE_TRANSACTION', closePrice: 0.547,
+      fieldCurrencies: { closePrice: 'USDT' },
+      fieldProvenance: { closePrice: { source: 'direct_ocr' } },
+    }])
+    const result = reconstructTradeEvidence(combined)
+    expect(result.margin).toBeCloseTo(10.703, 2)
+    expect(result.fieldProvenance?.margin).toMatchObject({ source: 'calculated', formula: 'abs(grossPnlAmount) / abs(pnlPercentage / 100)' })
+    expect(result.entryNotional).toBeCloseTo(107.03, 1)
+    expect(result.fieldProvenance?.entryNotional?.formula).toBe('margin * leverage')
+    expect(result.quantity).toBeCloseTo(191.81, 1)
+    expect(result.size).toBeCloseTo(104.92, 1)
+    expect(result.fieldProvenance?.size?.formula).toContain('closePrice')
+    expect(result.pnlAmount).toBe(-2.163)
+    expect(result.grossPnlAmount).toBe(-2.101)
+    expect(result.feeAmount).toBe(0.062)
+    expect(getInrToUsdRate).not.toHaveBeenCalled()
+  })
+
+  it('keeps directly extracted RARE quantity, size, margin and liquidation price authoritative', () => {
+    const result = reconstructTradeEvidence(normalizeExtractedText(positionScreenshotText))
+    expect(result).toMatchObject({ quantity: 8073, size: 136.353, margin: 18.379, liquidationPrice: 0.02463 })
+    expect(result.fieldProvenance?.margin?.source).toBe('direct_ocr')
+    expect(result.fieldProvenance?.liquidationPrice?.source).toBe('direct_ocr')
+    expect(8073 * 0.01689).toBeCloseTo(136.353, 3)
+    expect(38.347 / 18.379 * 100).toBeCloseTo(208.65, 1)
+  })
+
+  it('reconstructs RARE margin from gross P&L and exchange ROI percentage when Margin is absent', () => {
+    const result = reconstructTradeEvidence({
+      screenshotType: 'PNL', symbol: 'RARE/USDT', direction: 'SHORT', leverage: 10,
+      avgEntry: 0.0227, grossPnlAmount: 38.347, pnlPercentage: 208.65,
+      fieldCurrencies: { grossPnlAmount: 'USDT', avgEntry: 'USDT' },
+    })
+    expect(result.margin).toBeCloseTo(18.379, 2)
+    expect(result.entryNotional).toBeCloseTo(183.79, 1)
+    expect(result.quantity).toBeCloseTo(8096.5, 0)
+  })
+
+  it('merges screenshots as evidence for one selected trade without replacing direct values by calculations', () => {
+    const merged = mergeTradeEvidence([
+      { screenshotType: 'PNL', symbol: 'WLD/USDT', direction: 'LONG', leverage: 10, grossPnlAmount: -2.101, pnlPercentage: -19.63, fieldProvenance: { margin: { source: 'calculated' } }, margin: 10.702 }
+      ,{ screenshotType: 'POSITION_DETAILS', symbol: 'WLD/USDT', direction: 'LONG', margin: 10.71, liquidationPrice: 0.5105, fieldProvenance: { margin: { source: 'direct_ocr' }, liquidationPrice: { source: 'direct_ocr' } } },
+    ])
+    expect(merged).toMatchObject({ symbol: 'WLD/USDT', margin: 10.71, liquidationPrice: 0.5105 })
+    expect(merged.fieldProvenance?.margin?.source).toBe('direct_ocr')
+  })
+
+  it('estimates liquidation price only with a matching product risk calibration', () => {
+    const data = { direction: 'LONG' as const, avgEntry: 0.558, leverage: 10, exchange: 'Binance', marketType: 'Futures', marginMode: 'ISOLATED' as const, liquidationPrice: null }
+    const calibration = { exchange: 'Binance', marketType: 'Futures', leverage: 10, marginMode: 'ISOLATED' as const, maintenanceMarginRate: 0.015 }
+    const result = deriveLiquidationPrice(data, calibration)
+    expect(result?.value).toBeCloseTo(0.51057, 5)
+    expect(result?.provenance).toMatchObject({ source: 'estimated', requiresConfirmation: true })
+    expect(deriveLiquidationPrice({ ...data, exchange: undefined }, calibration)).toBeNull()
+    expect(deriveLiquidationPrice({ ...data, liquidationPrice: 0.51 }, calibration)).toBeNull()
+  })
+
+  it('calibrates from a complete RARE reference only when exchange/product/margin context is identified', () => {
+    const reference = { direction: 'SHORT' as const, avgEntry: 0.0227, leverage: 10, exchange: 'Binance', marketType: 'Futures', marginMode: 'ISOLATED' as const, liquidationPrice: 0.02463 }
+    const calibration = calibrateMaintenanceMargin(reference)
+    expect(calibration?.maintenanceMarginRate).toBeCloseTo(0.015, 3)
+    expect(calibrateMaintenanceMargin({ ...reference, exchange: undefined })).toBeNull()
+    const wld = reconstructTradeEvidence({ screenshotType: 'PNL', direction: 'LONG', avgEntry: 0.558, leverage: 10, exchange: 'Binance', marketType: 'Futures', marginMode: 'ISOLATED' }, calibration ?? undefined)
+    expect(wld.liquidationPrice).toBeCloseTo(0.51057, 4)
+    expect(wld.fieldProvenance?.liquidationPrice).toMatchObject({ source: 'estimated', requiresConfirmation: true })
+    expect(reconstructTradeEvidence({ screenshotType: 'PNL', direction: 'LONG', avgEntry: 0.558, leverage: 10 }, calibration ?? undefined).liquidationPrice).toBeUndefined()
   })
 
   it('extracts INR net P&L without mistaking it for an absent amount', () => {
@@ -288,6 +394,15 @@ describe('repeated-symbol lifecycle matching', () => {
     expect(findUniqueOpenTrade([{ ...rareShort, status: 'CLOSED' }], {
       screenshotType: 'POSITION_DETAILS', symbol: 'RARE/USDT', direction: 'SHORT',
     })).toBeNull()
+  })
+
+  it('matches P&L to a unique active trade and does not reuse a completed same-symbol trade', () => {
+    const closed = { ...rareShort, id: 'rare-closed', status: 'CLOSED' as const, closeTime: new Date(2026, 8, 30).toISOString() }
+    const pnl: ExtractedTradeData = { screenshotType: 'PNL', symbol: 'RARE/USDT', direction: 'SHORT', leverage: 10, avgEntry: 0.0227 }
+    expect(findTradeForPnl([closed, rareShort], pnl)).toBe(rareShort)
+    expect(findTradeForPnl([closed], pnl)).toBeNull()
+    expect(findTradeForPnl([rareShort, { ...rareShort, id: 'rare-second' }], pnl)).toBeNull()
+    expect(findTradeForPnl([rareShort], { ...pnl, avgEntry: undefined, leverage: undefined })).toBeNull()
   })
 
   it('attaches a late Open timestamp to a closed position without reopening it', () => {

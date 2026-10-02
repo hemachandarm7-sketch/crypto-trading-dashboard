@@ -9,6 +9,7 @@ import {
   updateTradeFromExtraction,
   recordTradeEvent,
   requireTradeEventId,
+  listTradeEvents,
 } from './tradeRepository'
 import { findDuplicateOpenTrade, findOpenTradeForClose, findOpenTradeForPositionDetails, findTradeForPnl, findTradeForOpenTransaction, findUniqueOpenTrade, normalizeSymbol } from './tradeMatchingService'
 import { calculateSpotPnl, determineCloseReason, formatDuration, resolvePnlPercentage } from './tradeLifecycle'
@@ -17,6 +18,7 @@ import type { Json } from '../types/database.types'
 import type { Trade, TradeEventType } from '../types'
 import { getInrToUsdRate } from './exchangeRateService'
 import { monetaryFields, type CurrencyCode } from '../utils/currency'
+import { mergeTradeEvidence, reconstructTradeEvidence } from './tradeReconstruction'
 
 export interface OCRResult { text: string; confidence?: number; recoveredMargin?: number }
 export interface OCRProvider { extractText(file: File): Promise<OCRResult> }
@@ -102,6 +104,7 @@ export const tesseractOCRProvider: OCRProvider = {
           const margin = await retryMarginInLabeledCell(file, result.data.blocks)
           if (margin != null) {
             parsed.margin = margin
+            parsed.fieldProvenance = { ...(parsed.fieldProvenance ?? {}), margin: { source: 'direct_ocr' } }
             trace('[OCR] recovered Margin from label-guided crop', margin)
           }
         } catch (error) {
@@ -125,10 +128,14 @@ export async function extractScreenshot(file: File, provider: OCRProvider | null
   if (!result.text.trim()) throw new Error('The OCR provider returned no readable text. Review this screenshot and enter the fields manually.')
   trace('[EXTRACT] started')
   const normalized = normalizeExtractedText(result.text, result.confidence)
-  if (result.recoveredMargin != null) normalized.margin = result.recoveredMargin
+  if (result.recoveredMargin != null) {
+    normalized.margin = result.recoveredMargin
+    normalized.fieldProvenance = { ...(normalized.fieldProvenance ?? {}), margin: { source: 'direct_ocr' } }
+  }
+  const reconstructed = reconstructTradeEvidence(normalized)
   trace('[EXTRACT] screenshot type', normalized.screenshotType)
-  trace('[EXTRACT] normalized result', normalized)
-  return normalized
+  trace('[EXTRACT] normalized result', reconstructed)
+  return reconstructed
 }
 
 export async function processScreenshot(
@@ -218,7 +225,7 @@ function toJsonObject(data: ExtractedTradeData): Record<string, unknown> {
   return JSON.parse(JSON.stringify(data)) as Record<string, unknown>
 }
 
-function toDraft(data: ExtractedTradeData) {
+function toDraft(data: ExtractedTradeData, useEventAsOpenTime = data.screenshotType === 'OPEN_TRANSACTION') {
   const initialPrice = data.avgEntry ?? data.transactionPrice
   if (!data.symbol || !data.direction) throw new Error('Cannot create a trade until both symbol and direction are confirmed from the screenshot.')
   return {
@@ -226,7 +233,8 @@ function toDraft(data: ExtractedTradeData) {
     direction: data.direction, leverage: data.leverage ?? null, quantity: data.quantity ?? null, size: data.size ?? null,
     margin: data.margin ?? null, avgEntry: initialPrice ?? null, ltp: data.ltp ?? null,
     liquidationPrice: data.liquidationPrice ?? null, takeProfit: data.takeProfit ?? null, stopLoss: data.stopLoss ?? null,
-    openTime: data.eventTime ?? null, closeTime: null, holdingDurationSeconds: null, holdingDurationDisplay: null,
+    // A P&L or position screenshot timestamp is not the moment the position opened.
+    openTime: useEventAsOpenTime ? data.eventTime ?? null : null, closeTime: null, holdingDurationSeconds: null, holdingDurationDisplay: null,
     closePrice: null, pnlAmount: null, pnlPercentage: null, status: 'OPEN' as const, closeReason: null,
     setup: null, notes: null, exchangePositionId: data.positionId ?? null,
     openTransactionId: data.transactionId ?? null, closeTransactionId: null,
@@ -319,7 +327,12 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   if (!matched && data.screenshotType === 'POSITION_DETAILS') matched = findOpenTradeForPositionDetails(trades, data)
   if (!matched && data.screenshotType === 'PNL') matched = findTradeForPnl(trades, data)
 
-  if (!matched && data.screenshotType === 'POSITION_DETAILS' && data.symbol && data.direction) {
+  const sameSideOpenTrades = data.symbol && data.direction ? trades.filter(trade => trade.status === 'OPEN'
+    && normalizeSymbol(trade.symbol) === normalizeSymbol(data.symbol)
+    && trade.direction === data.direction
+    && (!data.exchange || !trade.exchange || trade.exchange.toLowerCase() === data.exchange.toLowerCase())) : []
+
+  if (!matched && sameSideOpenTrades.length === 0 && data.screenshotType === 'POSITION_DETAILS' && data.symbol && data.direction) {
     const pendingOpen = await findPendingOpenScreenshot(userId, data)
     const pendingData = pendingOpen?.extraction_raw_data as Partial<ExtractedTradeData> | undefined
     const combined: ExtractedTradeData = {
@@ -328,7 +341,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
       screenshotType: 'OPEN_TRANSACTION',
       eventTime: typeof pendingData?.eventTime === 'string' ? pendingData.eventTime : data.eventTime,
     }
-    matched = await insertTrade(toDraft(combined))
+    matched = await insertTrade(toDraft(reconstructTradeEvidence(combined), Boolean(pendingOpen)))
     if (pendingOpen) {
       // The parent is committed now. Associate the earlier screenshot and create its
       // OPEN event only after the definitive database ID is available.
@@ -341,8 +354,16 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
     }
   }
 
+  let createdFromPnl = false
   if (data.screenshotType === 'OPEN_TRANSACTION' && !matched && data.symbol && data.direction) {
-    matched = await insertTrade(toDraft(data))
+    matched = await insertTrade(toDraft(reconstructTradeEvidence(data)))
+  } else if (data.screenshotType === 'PNL' && !matched && data.symbol && data.direction
+    && sameSideOpenTrades.length === 0
+    && (data.leverage != null || data.avgEntry != null || data.transactionPrice != null || data.closePrice != null)) {
+    // A P&L screenshot can be the first evidence uploaded for a trade. Keep the
+    // provisional trade OPEN until an explicit close transaction is confirmed.
+    matched = await insertTrade(toDraft(data, false))
+    createdFromPnl = true
   } else if (matched && data.screenshotType === 'OPEN_TRANSACTION') {
     // An Open transaction may arrive before side/position details. Keep its facts and fill missing identity only.
     const resolvedOpenTime = matched.openTime ?? data.eventTime ?? null
@@ -360,25 +381,50 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
       } : {}),
     }
     if (Object.keys(patch).length) matched = await updateTradeFromExtraction(matched.id, patch)
-  } else if (matched && data.screenshotType === 'POSITION_DETAILS') {
-    matched = await updateTradeFromExtraction(matched.id, nonNullPatch(data))
-  } else if (matched && data.screenshotType === 'CLOSE_TRANSACTION') {
-    const closePrice = data.closePrice ?? data.transactionPrice ?? null
-    const closeTime = data.eventTime ?? null
-    const closeReason = determineCloseReason(matched.direction, closePrice, matched.takeProfit, matched.stopLoss)
-    const pnlAmount = data.pnlAmount ?? calculateSpotPnl(matched.direction, matched.avgEntry, closePrice, matched.quantity, matched.marketType)
-    const dedicatedPnl = await getDedicatedPnlPercentage(userId, matched.id)
-    const pnlPercentage = resolvePnlPercentage(dedicatedPnl, data.pnlPercentage, matched.pnlPercentage, pnlAmount, matched.margin)
-    const holdingSeconds = matched.openTime && closeTime ? Math.max(0, Math.floor((Date.parse(closeTime) - Date.parse(matched.openTime)) / 1000)) : null
+  } else if (matched && (data.screenshotType === 'POSITION_DETAILS' || data.screenshotType === 'PNL' || data.screenshotType === 'CLOSE_TRANSACTION')) {
+    // Events are the durable evidence ledger. Combine the screenshots attached
+    // to this exact trade ID before updating current trade fields.
+    const priorEvents = await listTradeEvents(matched.id)
+    const evidence = reconstructTradeEvidence(mergeTradeEvidence([
+      ...priorEvents.map(event => event.rawData as Partial<ExtractedTradeData>),
+      data,
+    ]))
+
+    if (data.screenshotType === 'POSITION_DETAILS') {
+      matched = await updateTradeFromExtraction(matched.id, nonNullPatch(evidence))
+    } else if (data.screenshotType === 'PNL') {
+      const pnlPercentage = resolvePnlPercentage(evidence.pnlPercentage ?? null, null, matched.pnlPercentage, evidence.pnlAmount ?? matched.pnlAmount, evidence.margin ?? matched.margin)
+      matched = await updateTradeFromExtraction(matched.id, {
+        ...nonNullPatch(evidence),
+        ...(evidence.pnlAmount != null ? { pnlAmount: evidence.pnlAmount } : {}),
+        pnlPercentage,
+      })
+    } else {
+      const closePrice = data.closePrice ?? data.transactionPrice ?? evidence.closePrice ?? null
+      const closeTime = data.eventTime ?? null
+      const closeReason = determineCloseReason(matched.direction, closePrice, evidence.takeProfit ?? matched.takeProfit, evidence.stopLoss ?? matched.stopLoss)
+      const pnlAmount = evidence.pnlAmount ?? matched.pnlAmount ?? calculateSpotPnl(matched.direction, evidence.avgEntry ?? matched.avgEntry, closePrice, evidence.quantity ?? matched.quantity, matched.marketType)
+      const dedicatedPnl = await getDedicatedPnlPercentage(userId, matched.id)
+      const pnlPercentage = resolvePnlPercentage(dedicatedPnl, evidence.pnlPercentage, matched.pnlPercentage, pnlAmount, evidence.margin ?? matched.margin)
+      const holdingSeconds = matched.openTime && closeTime ? Math.max(0, Math.floor((Date.parse(closeTime) - Date.parse(matched.openTime)) / 1000)) : null
+      matched = await updateTradeFromExtraction(matched.id, {
+        ...nonNullPatch(evidence), status: 'CLOSED', closeTime, closePrice, closeReason,
+        closeTransactionId: data.transactionId ?? matched.closeTransactionId,
+        ...(pnlAmount != null ? { pnlAmount } : {}), pnlPercentage,
+        holdingDurationSeconds: Number.isFinite(holdingSeconds) ? holdingSeconds : null,
+        holdingDurationDisplay: formatDuration(holdingSeconds),
+      })
+    }
+  }
+
+  if (createdFromPnl && matched) {
+    const evidence = reconstructTradeEvidence(data)
+    const pnlPercentage = resolvePnlPercentage(evidence.pnlPercentage, null, matched.pnlPercentage, evidence.pnlAmount ?? null, evidence.margin ?? matched.margin)
     matched = await updateTradeFromExtraction(matched.id, {
-      status: 'CLOSED', closeTime, closePrice, closeReason, closeTransactionId: data.transactionId ?? null,
-      ...(pnlAmount != null ? { pnlAmount } : {}), pnlPercentage,
-      holdingDurationSeconds: Number.isFinite(holdingSeconds) ? holdingSeconds : null,
-      holdingDurationDisplay: formatDuration(holdingSeconds),
+      ...nonNullPatch(evidence),
+      ...(evidence.pnlAmount != null ? { pnlAmount: evidence.pnlAmount } : {}),
+      pnlPercentage,
     })
-  } else if (matched && data.screenshotType === 'PNL') {
-    const pnlPercentage = resolvePnlPercentage(data.pnlPercentage, null, matched.pnlPercentage, matched.pnlAmount, matched.margin)
-    matched = await updateTradeFromExtraction(matched.id, { pnlPercentage })
   }
 
   const tradeId = matched?.id ?? null

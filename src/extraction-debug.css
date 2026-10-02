@@ -34,3 +34,5 @@
 .success-notice b { color: var(--green); }
 
 .extraction-warning{border:1px solid #8a6a34;border-radius:8px;padding:10px 12px;color:#f0d29b;background:#302818}
+.form-grid .field-provenance{font-size:9px;line-height:1.35;color:#7f9b8c;overflow-wrap:anywhere}
+.form-grid .field-provenance.is-estimated{color:#f0c675}
