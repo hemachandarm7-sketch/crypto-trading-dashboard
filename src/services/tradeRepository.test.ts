@@ -15,7 +15,7 @@ const draft: TradeDraft = {
 describe('mapFormToTradeInsert', () => {
   it('maps reviewed fields explicitly to the database columns and preserves unknowns as null', () => {
     expect(mapFormToTradeInsert(draft, 'user-uuid')).toMatchObject({
-      user_id: 'user-uuid', trade_code: null, symbol: 'RARE/USDT', direction: 'SHORT', leverage: 10,
+      user_id: 'user-uuid', trade_code: null, coin: 'RARE', symbol: 'RARE/USDT', direction: 'SHORT', leverage: 10,
       quantity: 8073, size: 136.353, margin: 18.379, avg_entry: 0.0227, ltp: 0.01689,
       liquidation_price: 0.02463, take_profit: 0.01255, stop_loss: 0.01795,
       open_time: '2026-09-28T04:44:05.000Z', close_time: null, close_price: null,

@@ -84,6 +84,7 @@ export function mapFormToTradeInsert(trade: TradeDraft, userId: string): TradeIn
   return {
     user_id: userId,
     trade_code: null,
+    coin: trade.symbol.trim().split(/[/_-]/, 1)[0] || null,
     symbol: trade.symbol,
     exchange: trade.exchange,
     market_type: trade.marketType,
