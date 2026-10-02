@@ -8,7 +8,7 @@ const sourceRank: Record<ExtractionFieldProvenance['source'], number> = {
 }
 
 const evidenceFields = [
-  'symbol', 'direction', 'transactionPrice', 'closePrice', 'leverage', 'quantity', 'size', 'margin',
+  'symbol', 'direction', 'transactionPrice', 'closePrice', 'closeNotional', 'leverage', 'quantity', 'size', 'margin',
   'avgEntry', 'ltp', 'liquidationPrice', 'takeProfit', 'stopLoss', 'pnlAmount', 'grossPnlAmount',
   'feeAmount', 'entryNotional', 'pnlPercentage', 'transactionId', 'positionId', 'exchange', 'marketType', 'marginMode',
 ] as const
@@ -60,7 +60,8 @@ export function reconstructTradeEvidence(data: ExtractedTradeData, calibration?:
     reconstructed.fieldProvenance![field] = { source, formula, inputs, ...(requiresConfirmation ? { requiresConfirmation: true } : {}) }
   }
 
-  if (reconstructed.margin == null && reconstructed.grossPnlAmount != null && reconstructed.pnlPercentage != null && reconstructed.pnlPercentage !== 0) {
+  const wasCalculated = (field: string) => reconstructed.fieldProvenance?.[field]?.source === 'calculated'
+  if ((reconstructed.margin == null || wasCalculated('margin')) && reconstructed.grossPnlAmount != null && reconstructed.pnlPercentage != null && reconstructed.pnlPercentage !== 0) {
     const margin = Math.abs(reconstructed.grossPnlAmount) / Math.abs(reconstructed.pnlPercentage / 100)
     if (Number.isFinite(margin) && margin > 0) {
       reconstructed.margin = margin
@@ -69,34 +70,72 @@ export function reconstructTradeEvidence(data: ExtractedTradeData, calibration?:
       })
       reconstructed.fieldCurrencies!.margin ??= reconstructed.fieldCurrencies?.grossPnlAmount
     }
+  } else if (wasCalculated('margin')) {
+    reconstructed.margin = undefined
+    delete reconstructed.fieldProvenance!.margin
   }
 
   const entryPrice = reconstructed.avgEntry ?? reconstructed.transactionPrice
   if (reconstructed.margin != null && reconstructed.leverage != null && reconstructed.leverage > 0) {
     const entryNotional = reconstructed.margin * reconstructed.leverage
     if (Number.isFinite(entryNotional)) {
-      if (reconstructed.entryNotional == null) {
+      if (reconstructed.entryNotional == null || wasCalculated('entryNotional')) {
         reconstructed.entryNotional = entryNotional
         mark('entryNotional', 'calculated', 'margin * leverage', { margin: reconstructed.margin, leverage: reconstructed.leverage })
         reconstructed.fieldCurrencies!.entryNotional ??= reconstructed.fieldCurrencies?.margin
       }
       const marginCurrency = reconstructed.fieldCurrencies?.margin ?? reconstructed.fieldCurrencies?.grossPnlAmount
       const entryCurrency = reconstructed.fieldCurrencies?.avgEntry ?? reconstructed.fieldCurrencies?.transactionPrice
-      if (reconstructed.quantity == null && entryPrice != null && entryPrice > 0 && currencyCompatible(marginCurrency, entryCurrency)) {
+      if ((reconstructed.quantity == null || wasCalculated('quantity')) && entryPrice != null && entryPrice > 0 && currencyCompatible(marginCurrency, entryCurrency)) {
         reconstructed.quantity = (reconstructed.entryNotional ?? entryNotional) / entryPrice
         mark('quantity', 'calculated', 'entryNotional / entryPrice', { entryNotional: reconstructed.entryNotional ?? entryNotional, entryPrice })
       }
     }
+  } else {
+    if (wasCalculated('entryNotional')) {
+      reconstructed.entryNotional = undefined
+      delete reconstructed.fieldProvenance!.entryNotional
+    }
+    if (wasCalculated('quantity')) {
+      reconstructed.quantity = undefined
+      delete reconstructed.fieldProvenance!.quantity
+    }
   }
 
-  const valuationPrice = reconstructed.ltp ?? (reconstructed.screenshotType === 'CLOSE_TRANSACTION' ? reconstructed.closePrice : undefined)
-  const sizeCurrency = reconstructed.ltp != null ? reconstructed.fieldCurrencies?.ltp : reconstructed.fieldCurrencies?.closePrice
-  if (reconstructed.size == null && reconstructed.quantity != null && valuationPrice != null && currencyCompatible(reconstructed.fieldCurrencies?.entryNotional, sizeCurrency)) {
-    reconstructed.size = reconstructed.quantity * valuationPrice
-    mark('size', 'calculated', reconstructed.ltp != null ? 'quantity * ltp' : 'quantity * closePrice (closed valuation)', {
-      quantity: reconstructed.quantity, valuationPrice,
+  if (reconstructed.quantity != null && reconstructed.closePrice != null
+    && currencyCompatible(reconstructed.fieldCurrencies?.entryNotional, reconstructed.fieldCurrencies?.closePrice)
+    && (reconstructed.closeNotional == null || wasCalculated('closeNotional'))) {
+    reconstructed.closeNotional = reconstructed.quantity * reconstructed.closePrice
+    mark('closeNotional', 'calculated', 'quantity * closePrice', {
+      quantity: reconstructed.quantity, closePrice: reconstructed.closePrice,
     })
-    reconstructed.fieldCurrencies!.size ??= reconstructed.fieldCurrencies?.ltp ?? reconstructed.fieldCurrencies?.closePrice
+    reconstructed.fieldCurrencies!.closeNotional ??= reconstructed.fieldCurrencies?.closePrice
+  } else if (wasCalculated('closeNotional')) {
+    reconstructed.closeNotional = undefined
+    delete reconstructed.fieldProvenance!.closeNotional
+  }
+
+  const sizeValue = reconstructed.ltp != null && reconstructed.quantity != null
+    ? reconstructed.quantity * reconstructed.ltp
+    : reconstructed.entryNotional ?? (reconstructed.screenshotType === 'CLOSE_TRANSACTION' && reconstructed.closeNotional != null ? reconstructed.closeNotional : undefined)
+  if (sizeValue != null && Number.isFinite(sizeValue) && (reconstructed.size == null || wasCalculated('size'))) {
+    reconstructed.size = sizeValue
+    const formula = reconstructed.ltp != null && reconstructed.quantity != null
+      ? 'quantity * ltp'
+      : reconstructed.entryNotional != null ? 'margin * leverage (entry notional)' : 'quantity * closePrice'
+    mark('size', 'calculated', formula, {
+      ...(reconstructed.ltp != null && reconstructed.quantity != null
+        ? { quantity: reconstructed.quantity, valuationPrice: reconstructed.ltp }
+        : reconstructed.entryNotional != null
+          ? { margin: reconstructed.margin ?? null, leverage: reconstructed.leverage ?? null }
+          : { quantity: reconstructed.quantity ?? null, valuationPrice: reconstructed.closePrice ?? null }),
+    })
+    reconstructed.fieldCurrencies!.size ??= reconstructed.ltp != null
+      ? reconstructed.fieldCurrencies?.ltp
+      : reconstructed.fieldCurrencies?.entryNotional ?? reconstructed.fieldCurrencies?.closePrice
+  } else if (wasCalculated('size')) {
+    reconstructed.size = undefined
+    delete reconstructed.fieldProvenance!.size
   }
 
   const liquidation = deriveLiquidationPrice(reconstructed, calibration)

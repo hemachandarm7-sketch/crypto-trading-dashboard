@@ -2,7 +2,7 @@ export type CurrencyCode = 'INR' | 'USD' | 'USDT'
 
 export const monetaryFields = [
   'size', 'margin', 'transactionPrice', 'closePrice', 'avgEntry', 'ltp',
-  'liquidationPrice', 'takeProfit', 'stopLoss', 'pnlAmount',
+  'closeNotional', 'liquidationPrice', 'takeProfit', 'stopLoss', 'pnlAmount',
   'grossPnlAmount', 'feeAmount', 'entryNotional',
 ] as const
 
@@ -14,6 +14,7 @@ export type CurrencyAudit = Partial<Record<MonetaryField, {
   rateDate: string | null
   rateSource?: string | null
   convertedAt?: string | null
+  alternateValues?: Array<{ value: number; currency: CurrencyCode }>
 }>>
 
 export function formatCurrencyUSD(value: number | null | undefined, _sourceCurrency?: string): string {

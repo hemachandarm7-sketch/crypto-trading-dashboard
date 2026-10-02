@@ -195,6 +195,10 @@ describe('exchange screenshot OCR normalization', () => {
     expect(parsed.fieldCurrencies).toMatchObject({ grossPnlAmount: 'USDT', pnlAmount: 'USDT', feeAmount: 'USDT' })
   })
 
+  it.each(['ROI +208.65%', 'ROE +208.65%', 'Profit % +208.65%'])('accepts exchange percentage label %s', label => {
+    expect(normalizeExtractedText(`RARE/USDT\nSHORT 10x\n${label}`).pnlPercentage).toBe(208.65)
+  })
+
   it('prefers the explicit USDT equivalent when a transaction screenshot also shows rupees', async () => {
     const parsed = normalizeExtractedText([
       'Market RARE • USDT', 'Transaction type Close', 'Gross PNL', '₹3,856.92', '38.347 USDT',
@@ -204,6 +208,7 @@ describe('exchange screenshot OCR normalization', () => {
     expect(parsed.feeAmount).toBe(0.085)
     expect(parsed.pnlAmount).toBe(38.261)
     expect(parsed.fieldCurrencies).toMatchObject({ grossPnlAmount: 'USDT', feeAmount: 'USDT', pnlAmount: 'USDT' })
+    expect(parsed.currencyAudit?.pnlAmount?.alternateValues).toEqual([{ value: 3848.32, currency: 'INR' }])
     vi.mocked(getInrToUsdRate).mockClear()
     const normalized = await normalizeScreenshotCurrencies(parsed)
     expect(normalized.grossPnlAmount).toBe(38.347)
@@ -228,8 +233,10 @@ describe('exchange screenshot OCR normalization', () => {
     expect(result.entryNotional).toBeCloseTo(107.03, 1)
     expect(result.fieldProvenance?.entryNotional?.formula).toBe('margin * leverage')
     expect(result.quantity).toBeCloseTo(191.81, 1)
-    expect(result.size).toBeCloseTo(104.92, 1)
-    expect(result.fieldProvenance?.size?.formula).toContain('closePrice')
+    expect(result.size).toBeCloseTo(107.03, 1)
+    expect(result.fieldProvenance?.size?.formula).toContain('entry notional')
+    expect(result.closeNotional).toBeCloseTo(104.92, 1)
+    expect(result.fieldProvenance?.closeNotional?.formula).toBe('quantity * closePrice')
     expect(result.pnlAmount).toBe(-2.163)
     expect(result.grossPnlAmount).toBe(-2.101)
     expect(result.feeAmount).toBe(0.062)

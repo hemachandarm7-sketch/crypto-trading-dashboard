@@ -172,6 +172,7 @@ export async function processScreenshot(
 
 export async function confirmManualExtraction(screenshot: Screenshot, data: ExtractedTradeData, selectedTradeId?: string): Promise<string | null> {
   trace('[FORM CONFIRMED]', { screenshotId: screenshot.id, screenshotType: data.screenshotType, symbol: data.symbol, direction: data.direction, leverage: data.leverage })
+  data = reconstructTradeEvidence(data)
   data = await normalizeScreenshotCurrencies(data)
   await updateScreenshot(screenshot.id, {
     screenshot_type: data.screenshotType, extracted_at: new Date().toISOString(), extraction_status: 'EXTRACTED',
@@ -303,21 +304,32 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
   const trades = await listCurrentTrades()
-  const screenshotRow = await client.from('screenshots').select('id').eq('id', screenshotId).eq('user_id', userId).single()
+  const screenshotRow = await client.from('screenshots').select('id,trade_id').eq('id', screenshotId).eq('user_id', userId).single()
   if (screenshotRow.error) throw screenshotRow.error
 
   const duplicateTradeId = await detectDuplicateTransaction(userId, data)
   if (duplicateTradeId) {
-    await updateScreenshot(screenshotId, { trade_id: duplicateTradeId, extraction_status: 'COMPLETED' })
+    await updateScreenshot(screenshotId, {
+      trade_id: duplicateTradeId, extraction_status: 'MATCHED', screenshot_type: data.screenshotType,
+      extraction_raw_data: toJsonObject(data) as unknown as Json, extraction_confidence: data.confidence ?? null,
+    })
     await recordEvent(screenshotId, duplicateTradeId, data, data.screenshotType === 'CLOSE_TRANSACTION' ? 'CLOSE' : eventTypeFor(data.screenshotType))
+    await updateScreenshot(screenshotId, { extraction_status: 'COMPLETED', extracted_at: new Date().toISOString() })
     return duplicateTradeId
   }
 
-  let matched: Trade | null = selectedTradeId ? trades.find(trade => trade.id === selectedTradeId) ?? null : null
+  let matched: Trade | null = selectedTradeId
+    ? trades.find(trade => trade.id === selectedTradeId) ?? null
+    : trades.find(trade => trade.id === screenshotRow.data.trade_id)
+      ?? trades.find(trade => trade.id === screenshotId)
+      ?? null
   if (matched && data.screenshotType !== 'PNL' && matched.status !== 'OPEN') matched = null
   const eventType: TradeEventType = eventTypeFor(data.screenshotType)
   if (data.screenshotType === 'UNKNOWN') {
-    await updateScreenshot(screenshotId, { trade_id: null, extraction_status: 'EXTRACTED' })
+    await updateScreenshot(screenshotId, {
+      trade_id: null, extraction_status: 'EXTRACTED', screenshot_type: data.screenshotType,
+      extraction_raw_data: toJsonObject(data) as unknown as Json, extraction_confidence: data.confidence ?? null,
+    })
     return null
   }
   if (!matched && data.screenshotType === 'OPEN_TRANSACTION') matched = findDuplicateOpenTrade(trades, data)
@@ -341,7 +353,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
       screenshotType: 'OPEN_TRANSACTION',
       eventTime: typeof pendingData?.eventTime === 'string' ? pendingData.eventTime : data.eventTime,
     }
-    matched = await insertTrade(toDraft(reconstructTradeEvidence(combined), Boolean(pendingOpen)))
+    matched = await insertTrade(toDraft(reconstructTradeEvidence(combined), Boolean(pendingOpen)), screenshotId)
     if (pendingOpen) {
       // The parent is committed now. Associate the earlier screenshot and create its
       // OPEN event only after the definitive database ID is available.
@@ -356,13 +368,13 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
 
   let createdFromPnl = false
   if (data.screenshotType === 'OPEN_TRANSACTION' && !matched && data.symbol && data.direction) {
-    matched = await insertTrade(toDraft(reconstructTradeEvidence(data)))
+    matched = await insertTrade(toDraft(reconstructTradeEvidence(data)), screenshotId)
   } else if (data.screenshotType === 'PNL' && !matched && data.symbol && data.direction
     && sameSideOpenTrades.length === 0
     && (data.leverage != null || data.avgEntry != null || data.transactionPrice != null || data.closePrice != null)) {
     // A P&L screenshot can be the first evidence uploaded for a trade. Keep the
     // provisional trade OPEN until an explicit close transaction is confirmed.
-    matched = await insertTrade(toDraft(data, false))
+    matched = await insertTrade(toDraft(data, false), screenshotId)
     createdFromPnl = true
   } else if (matched && data.screenshotType === 'OPEN_TRANSACTION') {
     // An Open transaction may arrive before side/position details. Keep its facts and fill missing identity only.
@@ -429,7 +441,11 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
 
   const tradeId = matched?.id ?? null
   const eventKind: TradeEventType = data.screenshotType === 'CLOSE_TRANSACTION' ? 'CLOSE' : eventType
-  if (tradeId) await updateScreenshot(screenshotId, { extraction_status: 'MATCHED' })
+  if (tradeId) await updateScreenshot(screenshotId, {
+    trade_id: tradeId, extraction_status: 'MATCHED', screenshot_type: data.screenshotType,
+    extracted_at: new Date().toISOString(), extraction_raw_data: toJsonObject(data) as unknown as Json,
+    extraction_confidence: data.confidence ?? null,
+  })
   if (tradeId) await recordEvent(screenshotId, tradeId, data, eventKind)
   await updateScreenshot(screenshotId, {
     trade_id: tradeId,

@@ -15,34 +15,36 @@ function labeledNumber(text: string, label: string): number | undefined {
 function labeledAmount(text: string, label: string): number | undefined {
   const usdtValue = labeledUsdtAmount(text, label)
   if (usdtValue != null) return usdtValue
-  const direct = new RegExp('(?:^|\\n|\\b)' + label + '[ \\t]*(?:\\([^\\n)]*\\)[ \\t]*)?[:=#]?[ \\t]*[₹$]?[ \\t]*([+-]?[\\d,]+(?:\\.\\d+)?)', 'i').exec(text)?.[1]
+  const direct = new RegExp('(?:^|\\n|\\b)' + label + '[ \\t]*(?:\\([^\\n)]*\\)[ \\t]*)?[:=#]?[ \\t]*([+-]?[ \\t]*[₹$]?[ \\t]*[\\d,]+(?:\\.\\d+)?)', 'i').exec(text)?.[1]
   if (direct) {
-    const value = Number(direct.replace(/,/g, ''))
+    const value = Number(direct.replace(/[₹$\\s,]/g, ''))
     if (Number.isFinite(value)) return value
   }
 
   const lines = text.split(/\r?\n/)
-  const nextMetric = /\b(?:Net\s+P(?:NL|&L)|Gross\s+P(?:NL|&L)|Fees?|Profit\s*%|Loss\s*%|Entry\s+Price|Close\s+Price|Created\s+At)\b/i
+  const nextMetric = amountSectionBoundary
   for (const [index, line] of lines.entries()) {
     if (!new RegExp(label, 'i').test(line) || index + 1 >= lines.length) continue
-    for (let valueIndex = index + 1; valueIndex < lines.length; valueIndex++) {
+    for (let valueIndex = index + 1; valueIndex < lines.length && valueIndex <= index + 3; valueIndex++) {
       const candidate = lines[valueIndex].trim()
       if (!candidate) continue
       if (nextMetric.test(candidate)) break
-      const value = candidate.match(/[+-]?\s*[₹$]?\s*\d[\d,]*(?:\.\d+)?/)?.[0]
+      const value = candidate.match(/^([+-]?\s*[₹$]?\s*\d[\d,]*(?:\.\d+)?)(?:\s*(?:INR|USD|USDT))?\s*$/i)?.[1]
       if (value) {
         const parsed = Number(value.replace(/[₹$\s,]/g, ''))
         if (Number.isFinite(parsed)) return parsed
       }
-      if (/[A-Za-z]/.test(candidate) && !/\b(?:USDT|USD|INR|Rs\.?)\b/i.test(candidate)) break
+      break
     }
   }
   return undefined
 }
 
+const amountSectionBoundary = /^\s*(?:Net\s+P(?:NL|&L)|Gross\s+P(?:NL|&L)|Fees?|Profit\s*%|Loss\s*%|ROI|ROE|Entry\s+Price|Close\s+Price|Created\s+At|(?:Qty|Quantity|Size|Margin|Avg\.?\s*Entry|Average\s*Entry|LTP|Last\s*Traded\s*Price|Li[qg]\.?\s*Price|Liquidation\s*Price|TP|Take\s*Profit|SL|Stop\s*Loss|Order\s+ID|Transaction\s+type|Open|Close)\b)/i
+
 function labeledUsdtAmount(text: string, label: string): number | undefined {
   const lines = text.split(/\r?\n/)
-  const nextMetric = /^\s*(?:Net\s+P(?:NL|&L)|Gross\s+P(?:NL|&L)|Fees?|Profit\s*%|Loss\s*%|Entry\s+Price|Close\s+Price|Created\s+At)\b/i
+  const nextMetric = amountSectionBoundary
   for (let index = 0; index < lines.length; index++) {
     if (!new RegExp(label, 'i').test(lines[index])) continue
     const parts = [lines[index]]
@@ -55,6 +57,23 @@ function labeledUsdtAmount(text: string, label: string): number | undefined {
       const value = Number(match[1].replace(/[₹$\s,]/g, ''))
       if (Number.isFinite(value)) return value
     }
+  }
+  return undefined
+}
+
+function labeledInrAmount(text: string, label: string): number | undefined {
+  const lines = text.split(/\r?\n/)
+  for (let index = 0; index < lines.length; index++) {
+    if (!new RegExp(label, 'i').test(lines[index])) continue
+    const parts = [lines[index]]
+    for (let next = index + 1; next < lines.length && next <= index + 3; next++) {
+      if (amountSectionBoundary.test(lines[next])) break
+      parts.push(lines[next])
+    }
+    const match = parts.join(' ').match(/([+-]?)\s*(?:₹|\bINR\b|\bRs\.?)\s*([+-]?\s*\d[\d,]*(?:\.\d+)?)/i)
+    if (!match) continue
+    const value = Number(match[2].replace(/[\s,]/g, ''))
+    if (Number.isFinite(value)) return match[1] === '-' || match[2].trim().startsWith('-') ? -Math.abs(value) : Math.abs(value)
   }
   return undefined
 }
@@ -161,7 +180,10 @@ function isoEventTime(text: string): string | undefined {
 function classify(text: string): ScreenshotType {
   const explicitTransaction = text.match(/Transaction\s+type\s*[:#]?\s*(Open|Close)\b/i)?.[1]
   if (explicitTransaction) return explicitTransaction.toLowerCase() === 'open' ? 'OPEN_TRANSACTION' : 'CLOSE_TRANSACTION'
-  if (/\b(?:Profit\s*%|Loss\s*%|P\s*&\s*L|(?:Net|Gross)\s+P(?:NL|&L)|Fees?|Realized\s+Pnl)\b/i.test(text)) return 'PNL'
+  const transactionDetails = text.match(/Transaction\s+Details[\s\S]{0,300}/i)?.[0]
+  const transactionAction = transactionDetails?.match(/\b(Open|Close)\b/i)?.[1]
+  if (transactionAction) return transactionAction.toLowerCase() === 'open' ? 'OPEN_TRANSACTION' : 'CLOSE_TRANSACTION'
+  if (/\b(?:Profit\s*%|Loss\s*%|ROI|ROE|P\s*&\s*L|(?:Net|Gross)\s+P(?:NL|&L)|Fees?|Realized\s+Pnl)\b/i.test(text)) return 'PNL'
   if (/\b(?:Qty|Quantity)\b|\bSize\s*\(|\bMargin\s*\(|\bLeverage\b|\bAvg\.?\s*Entry\b|\bLiq\.?\s*Price\b|\bLiquidation\s*Price\b/i.test(text)) return 'POSITION_DETAILS'
   const hasOpen = /\bopen\b/i.test(text)
   const hasClose = /\bclose\b/i.test(text)
@@ -211,7 +233,7 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const transactionPrice = labeledNumber(text, '(?:Transaction\\s*Price|Price)')
   const grossPnlAmount = labeledAmount(text, 'Gross\\s+P(?:NL|&L)')
   const feeAmount = labeledAmount(text, 'Fees?')
-  const pnlAmount = screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' ? netUsdtPnl(text) ?? netLocalPnl(text) : undefined
+  const pnlAmount = screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' ? labeledAmount(text, 'Net\\s+P(?:NL|&L)') : undefined
   const pnlPercentage = parsePnlPercentage(text)
   const transactionId = text.match(/\b(?:Transaction|Order|Trade)\s*(?:ID|No\.?|#)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
   const positionId = text.match(/\b(?:Position\s*ID|Position\s*No\.?|Contract\s*ID)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
@@ -219,6 +241,11 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const marketType = text.match(/\b(Spot|Perpetual|Futures)\b/i)?.[1]
   const marginMode = text.match(/\b(Isolated|Cross)\b/i)?.[1]?.toUpperCase() as 'ISOLATED' | 'CROSS' | undefined
   const fieldCurrencies: Partial<Record<MonetaryField, CurrencyCode>> = {}
+  const fieldValues: Partial<Record<MonetaryField, number | undefined>> = {
+    size, margin, transactionPrice, closePrice, avgEntry, ltp, liquidationPrice, takeProfit, stopLoss,
+    pnlAmount, grossPnlAmount, feeAmount,
+  }
+  const currencyAudit: NonNullable<ExtractedTradeData['currencyAudit']> = {}
   const currencyCandidates: [MonetaryField, string][] = [
     ['size', '\\bSize\\b'], ['margin', '\\bMargin(?:\\s+Used)?\\b'], ['transactionPrice', '\\b(?:Transaction\\s+)?Price\\b'],
     ['closePrice', '\\b(?:Close|Exit)\\s+Price\\b'], ['avgEntry', '\\b(?:Avg\\.?\\s*Entry|Average\\s*Entry|Entry\\s*Price)\\b'],
@@ -237,14 +264,22 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
     const nextValueLine = /\b(?:Qty|Quantity|Size|Margin(?: Used)?|Avg\.?\s*Entry|Average\s*Entry|LTP|Last\s*Traded\s*Price|Li[qg]\.?\s*Price|Liquidation\s*Price|TP|Take\s*Profit|SL|Stop\s*Loss|Net\s+P(?:NL|&L))\b/i.test(nextLine) ? '' : nextLine
     // Keep currency detection close to this label/value pair. A broad text
     // window can accidentally borrow INR from an unrelated P&L line.
-    const labelIsUsdtPnl = (field === 'grossPnlAmount' || field === 'feeAmount') && labeledUsdtAmount(text, label) != null
+    const labelIsUsdtPnl = (field === 'pnlAmount' || field === 'grossPnlAmount' || field === 'feeAmount') && labeledUsdtAmount(text, label) != null
     const currency = labelIsUsdtPnl ? 'USDT' : detectCurrency(labelLine)
       ?? detectCurrency(nextValueLine)
       ?? (normalizedSymbol?.toUpperCase().includes('/USDT') ? 'USDT' : null)
     if (currency) fieldCurrencies[field] = currency
+    const value = fieldValues[field]
+    const alternateInr = currency === 'USDT' ? labeledInrAmount(text, label) : undefined
+    if (value != null && alternateInr != null) {
+      currencyAudit[field] = {
+        originalValue: value, originalCurrency: 'USDT', usdRate: 1, rateDate: null,
+        rateSource: null, convertedAt: null, alternateValues: [{ value: alternateInr, currency: 'INR' }],
+      }
+    }
   }
   if (screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL') {
-    if (pnlAmount != null && /Net\s+P(?:NL|&L)[\s\S]{0,100}?[+-]?\s*[₹$]?\s*[\d,.]+\s*USDT\b/i.test(text)) fieldCurrencies.pnlAmount = 'USDT'
+    if (pnlAmount != null && labeledUsdtAmount(text, 'Net\\s+P(?:NL|&L)') != null) fieldCurrencies.pnlAmount = 'USDT'
     else if (pnlAmount != null && !fieldCurrencies.pnlAmount) fieldCurrencies.pnlAmount = detectCurrency(text) ?? undefined
   }
   const fieldProvenance = Object.fromEntries(Object.entries({
@@ -257,22 +292,6 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
     eventTime: parseOcrEventTime(text), closePrice, transactionPrice, leverage, quantity, size, margin, avgEntry, ltp,
     liquidationPrice, takeProfit, stopLoss, pnlAmount, grossPnlAmount, feeAmount, pnlPercentage: pnlPercentage ?? undefined, transactionId, positionId, exchange,
     marketType: marketType?.toLowerCase() === 'spot' ? 'Spot' : marketType ? marketType[0].toUpperCase() + marketType.slice(1).toLowerCase() : undefined,
-    marginMode, rawText: text, confidence, fieldCurrencies, fieldProvenance,
+    marginMode, rawText: text, confidence, fieldCurrencies, fieldProvenance, currencyAudit,
   }
-}
-
-function netUsdtPnl(text: string): number | undefined {
-  const section = text.match(/Net\s+P(?:NL|&L)([\s\S]{0,100})/i)?.[1]
-  const value = section?.match(/([+-]?\s*[₹$]?\s*\d[\d,]*(?:\.\d+)?)\s*USDT\b/i)?.[1]
-  if (!value) return undefined
-  const amount = Number(value.replace(/[₹$\s,]/g, ''))
-  return Number.isFinite(amount) ? amount : undefined
-}
-
-function netLocalPnl(text: string): number | undefined {
-  const section = text.match(/Net\s+P(?:NL|&L)([\s\S]{0,100})/i)?.[1]
-  const match = section?.match(/([+-]?)\s*[₹$]\s*([\d,]+(?:\.\d+)?)/)
-  if (!match) return undefined
-  const value = Number(match[2].replace(/,/g, ''))
-  return Number.isFinite(value) ? (match[1] === '-' ? -value : value) : undefined
 }

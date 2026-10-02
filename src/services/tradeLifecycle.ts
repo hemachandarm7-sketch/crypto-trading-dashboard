@@ -78,5 +78,7 @@ export function parsePnlPercentage(text: string): number | null {
   if (profit && loss) return null
   if (profit) return Math.abs(Number(profit[1].replace(/\s/g, '')))
   if (loss) return -Math.abs(Number(loss[1].replace(/\s/g, '')))
+  const roi = text.match(/\b(?:ROI|ROE)\s*[:=#]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
+  if (roi) return Number(roi[1].replace(/\s/g, ''))
   return null
 }

@@ -14,8 +14,9 @@ const trace = (...values: unknown[]) => { if (import.meta.env.DEV) console.debug
 function databaseError(context: string, error: { message: string; code?: string; details?: string; hint?: string }): Error {
   trace(`[${context}] error`, { code: error.code, message: error.message, details: error.details, hint: error.hint })
   const code = error.code ? ` (${error.code})` : ''
+  const details = error.details ? ` Details: ${error.details}` : ''
   const hint = error.hint ? ` Hint: ${error.hint}` : ''
-  return new Error(`${context}${code}: ${error.message}${hint}`)
+  return new Error(`${context}${code}: ${error.message}${details}${hint}`)
 }
 
 export function mapTrade(row: TradeRow): Trade {
@@ -49,15 +50,32 @@ export async function listTrades(): Promise<Trade[]> {
   return (data ?? []).map(mapTrade)
 }
 
-export async function insertTrade(draft: TradeDraft): Promise<Trade> {
+export async function insertTrade(draft: TradeDraft, idempotencyKey?: string): Promise<Trade> {
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
-  const payload = mapFormToTradeInsert(draft, userId)
+  const payload = mapFormToTradeInsert(draft, userId, idempotencyKey)
   const safePayload = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'user_id'))
   trace('[TRADE PAYLOAD]', safePayload)
-  trace('[SUPABASE INSERT]', { table: 'trades', requested: true })
+  trace('[SUPABASE INSERT]', {
+    table: 'trades', requested: true, userId, tradeId: payload.id ?? null,
+    symbol: payload.symbol, direction: payload.direction, status: payload.status, leverage: payload.leverage,
+    entry: payload.avg_entry, close: payload.close_price, margin: payload.margin, size: payload.size,
+    quantity: payload.quantity, pnl: payload.pnl_amount, currency: 'USD',
+  })
   const { data, error } = await client.from('trades').insert(payload).select('*').single()
-  if (error) throw databaseError('Supabase trade insert failed', error)
+  if (error) {
+    if (idempotencyKey && error.code === '23505') {
+      const { data: existing, error: lookupError } = await client.from('trades').select('*')
+        .eq('id', idempotencyKey).eq('user_id', userId).maybeSingle()
+      if (lookupError) throw databaseError('Supabase trade retry lookup failed', lookupError)
+      if (existing) {
+        trace('[SUPABASE IDEMPOTENT RETRY]', { id: existing.id, userId })
+        return mapTrade(existing)
+      }
+    }
+    throw databaseError('Supabase trade insert failed', error)
+  }
+  if (!data) throw new Error('Supabase trade insert returned no saved trade row.')
   trace('[SUPABASE RESPONSE]', { operation: 'insert', id: data.id, status: data.status })
   return mapTrade(data)
 }
@@ -80,8 +98,9 @@ export async function removeTrade(id: string): Promise<void> {
   if (error) throw error
 }
 
-export function mapFormToTradeInsert(trade: TradeDraft, userId: string): TradeInsertRow {
+export function mapFormToTradeInsert(trade: TradeDraft, userId: string, idempotencyKey?: string): TradeInsertRow {
   return {
+    ...(idempotencyKey ? { id: idempotencyKey } : {}),
     user_id: userId,
     trade_code: null,
     coin: trade.symbol.trim().split(/[/_-]/, 1)[0] || null,
@@ -216,7 +235,7 @@ export async function updateScreenshot(id: string, patch: Database['public']['Ta
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
   const { error } = await client.from('screenshots').update(patch).eq('id', id).eq('user_id', userId)
-  if (error) throw error
+  if (error) throw databaseError('Supabase screenshot update failed', error)
 }
 
 export async function associateScreenshot(screenshotId: string, tradeId: string | null): Promise<void> {
@@ -263,7 +282,19 @@ export async function recordTradeEvent(input: {
     }
   }
   const { error } = await client.from('trade_events').insert(event)
-  if (error) throw databaseError('Could not save the trade event', error)
+  if (error) {
+    if (input.screenshotId && error.code === '23505') {
+      const { data: existing, error: lookupError } = await client.from('trade_events').select('id')
+        .eq('user_id', userId).eq('screenshot_id', input.screenshotId).eq('event_type', input.eventType).maybeSingle()
+      if (lookupError) throw databaseError('Could not verify the retried trade event', lookupError)
+      if (existing) {
+        const { error: updateError } = await client.from('trade_events').update(event).eq('id', existing.id).eq('user_id', userId)
+        if (updateError) throw databaseError('Could not update the retried trade event', updateError)
+        return
+      }
+    }
+    throw databaseError('Could not save the trade event', error)
+  }
 }
 
 /** Refuse to issue a trade_events write unless the parent trade ID is known. */

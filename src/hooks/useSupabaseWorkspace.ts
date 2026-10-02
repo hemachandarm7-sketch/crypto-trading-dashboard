@@ -16,35 +16,37 @@ export function useSupabaseWorkspace() {
   const requestId = useRef(0)
   const identityId = useRef<string | null>(null)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<Trade[] | null> => {
     if (!supabaseConfigured) {
       setLoading(false)
       setError('Supabase is not configured. Copy .env.example to .env, add the project URL and anon key, then restart Vite.')
-      return
+      return null
     }
     const currentRequest = ++requestId.current
     setLoading(true)
     setError(null)
     try {
       const nextIdentity = await getWorkspaceIdentity()
-      if (currentRequest !== requestId.current) return
+      if (currentRequest !== requestId.current) return null
       if (!nextIdentity) {
         identityId.current = null
         setTrades([])
         setScreenshots([])
         setSettings(defaultUserSettings)
         setIdentity(null)
-        return
+        return []
       }
       const [nextTrades, nextScreenshots, nextSettings] = await Promise.all([listTrades(), listScreenshots(), loadUserSettings()])
-      if (currentRequest !== requestId.current) return
+      if (currentRequest !== requestId.current) return null
       setTrades(nextTrades)
       setScreenshots(nextScreenshots)
       setSettings(nextSettings)
       setIdentity(nextIdentity)
       identityId.current = nextIdentity.id
+      return nextTrades
     } catch (cause) {
       if (currentRequest === requestId.current) setError(cause instanceof Error ? cause.message : 'Could not load the Supabase workspace.')
+      return null
     } finally {
       if (currentRequest === requestId.current) setLoading(false)
     }
@@ -78,7 +80,7 @@ export function useSupabaseWorkspace() {
   useEffect(() => {
     if (!identity?.id) return
     const client = requireSupabase()
-    const revalidate = createRevalidationTrigger(refresh, () => document.visibilityState === 'visible')
+    const revalidate = createRevalidationTrigger(async () => { await refresh() }, () => document.visibilityState === 'visible')
     const removeChannel = subscribeWorkspaceChanges(client, identity.id, revalidate)
     window.addEventListener('focus', revalidate)
     document.addEventListener('visibilitychange', revalidate)

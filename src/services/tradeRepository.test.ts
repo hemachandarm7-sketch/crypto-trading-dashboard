@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest'
-import { mapFormToTradeInsert, mapTradeEventInsert, recordTradeEvent, requireTradeEventId } from './tradeRepository'
+import { describe, expect, it, vi } from 'vitest'
+const supabaseMock = vi.hoisted(() => ({ client: { from: vi.fn() } }))
+vi.mock('./supabaseClient', () => ({
+  requireSupabase: () => supabaseMock.client,
+  ensureSupabaseUser: async () => 'user-uuid',
+}))
+import { insertTrade, mapFormToTradeInsert, mapTradeEventInsert, recordTradeEvent, requireTradeEventId } from './tradeRepository'
 import type { TradeDraft } from './tradeRepository'
 
 const draft: TradeDraft = {
@@ -25,6 +30,48 @@ describe('mapFormToTradeInsert', () => {
     expect(row).not.toHaveProperty('avgEntry')
     expect(row).not.toHaveProperty('takeProfit')
     expect(row).not.toHaveProperty('stopLoss')
+  })
+
+  it('uses a stable screenshot-derived trade ID when requested', () => {
+    expect(mapFormToTradeInsert(draft, 'user-uuid', 'screenshot-id')).toMatchObject({ id: 'screenshot-id', user_id: 'user-uuid' })
+  })
+})
+
+const savedTradeRow = {
+  id: 'screenshot-id', symbol: 'RARE/USDT', exchange: 'CoinDCX', market_type: 'Futures', direction: 'SHORT',
+  leverage: 10, quantity: 8073, size: 136.353, margin: 18.379, avg_entry: 0.0227, ltp: 0.01689,
+  liquidation_price: 0.02463, take_profit: 0.01255, stop_loss: 0.01795, open_time: null, close_time: null,
+  holding_duration_seconds: null, holding_duration_display: null, close_price: null, pnl_amount: null,
+  pnl_percentage: null, status: 'OPEN', close_reason: null, setup: null, notes: null, exchange_position_id: null,
+  open_transaction_id: null, close_transaction_id: null, created_at: '', updated_at: '',
+}
+
+function query(result: { data?: unknown; error?: { message: string; code?: string; details?: string; hint?: string } | null }) {
+  const chain: Record<string, unknown> = {}
+  for (const method of ['insert', 'select', 'eq', 'update']) chain[method] = vi.fn(() => chain)
+  chain.single = vi.fn(async () => result)
+  chain.maybeSingle = vi.fn(async () => result)
+  return chain
+}
+
+describe('insertTrade persistence', () => {
+  it('waits for and maps the successful Supabase insert response', async () => {
+    const table = query({ data: savedTradeRow, error: null })
+    supabaseMock.client.from.mockReturnValueOnce(table)
+    const saved = await insertTrade(draft, 'screenshot-id')
+    expect(supabaseMock.client.from).toHaveBeenCalledWith('trades')
+    expect(table.insert).toHaveBeenCalledWith(expect.objectContaining({ id: 'screenshot-id', user_id: 'user-uuid' }))
+    expect(saved).toMatchObject({ id: 'screenshot-id', symbol: 'RARE/USDT', direction: 'SHORT' })
+  })
+
+  it('returns the existing row on a stable-ID retry and surfaces rejected inserts', async () => {
+    supabaseMock.client.from
+      .mockReturnValueOnce(query({ error: { code: '23505', message: 'duplicate key' } }))
+      .mockReturnValueOnce(query({ data: savedTradeRow, error: null }))
+    await expect(insertTrade(draft, 'screenshot-id')).resolves.toMatchObject({ id: 'screenshot-id' })
+
+    supabaseMock.client.from.mockReturnValueOnce(query({ error: { code: '42501', message: 'row-level security policy denied' } }))
+    await expect(insertTrade(draft, 'different-screenshot')).rejects.toThrow('Supabase trade insert failed (42501): row-level security policy denied')
   })
 })
 

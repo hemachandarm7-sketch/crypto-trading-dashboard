@@ -51,6 +51,7 @@ export interface ExtractedTradeData {
   eventTime?: string | null
   transactionPrice?: number | null
   closePrice?: number | null
+  closeNotional?: number | null
   leverage?: number | null
   quantity?: number | null
   size?: number | null
