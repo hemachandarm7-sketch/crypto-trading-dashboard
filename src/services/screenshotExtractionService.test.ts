@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeExtractedText } from './screenshotTextParser'
-import { findOpenTradeForClose, findTradeForOpenTransaction, findUniqueOpenTrade } from './tradeMatchingService'
+import { findOpenTradeForClose, findOpenTradeForPositionDetails, findTradeForOpenTransaction, findUniqueOpenTrade } from './tradeMatchingService'
 import { determineCloseReason } from './tradeLifecycle'
 import type { ExtractedTradeData, Trade } from '../types'
 
@@ -92,6 +92,14 @@ describe('exchange screenshot OCR normalization', () => {
 })
 
 describe('repeated-symbol lifecycle matching', () => {
+  it('reuses the existing open trade when a position-details screenshot is confirmed again', () => {
+    const position: ExtractedTradeData = {
+      screenshotType: 'POSITION_DETAILS', symbol: 'RARE/USDT', direction: 'SHORT', leverage: 10,
+      quantity: 8073, avgEntry: 0.0227,
+    }
+    expect(findOpenTradeForPositionDetails([rareShort], position)).toBe(rareShort)
+  })
+
   it('matches a close screenshot without direction only when there is one active position for that coin', () => {
     const closeData: ExtractedTradeData = { screenshotType: 'CLOSE_TRANSACTION', symbol: 'RARE/USDT', eventTime: new Date(2026, 8, 30).toISOString() }
     expect(findOpenTradeForClose([rareShort], closeData)).toBe(rareShort)
