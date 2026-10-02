@@ -30,7 +30,7 @@ export interface Database {
     Tables: {
       trades: Table<TradeRow, Partial<TradeRow> & Pick<TradeRow, 'user_id' | 'symbol' | 'direction'>, Partial<TradeRow>>
       screenshots: Table<ScreenshotRow, Partial<ScreenshotRow> & Pick<ScreenshotRow, 'user_id' | 'storage_path' | 'sha256' | 'original_name' | 'content_type' | 'size_bytes'>, Partial<ScreenshotRow>>
-      trade_events: Table<TradeEventRow, Partial<TradeEventRow> & Pick<TradeEventRow, 'user_id' | 'trade_id' | 'event_type'>, Partial<TradeEventRow>>
+      trade_events: Table<TradeEventRow, Omit<Partial<TradeEventRow>, 'trade_id'> & Pick<TradeEventRow, 'user_id' | 'event_type'> & { trade_id: string }, Partial<TradeEventRow>>
       user_settings: Table<UserSettingsRow, Partial<UserSettingsRow> & Pick<UserSettingsRow, 'user_id'>, Partial<UserSettingsRow>>
     }
     Views: Record<string, never>

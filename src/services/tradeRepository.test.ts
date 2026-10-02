@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mapFormToTradeInsert } from './tradeRepository'
+import { mapFormToTradeInsert, mapTradeEventInsert, recordTradeEvent, requireTradeEventId } from './tradeRepository'
 import type { TradeDraft } from './tradeRepository'
 
 const draft: TradeDraft = {
@@ -25,5 +25,29 @@ describe('mapFormToTradeInsert', () => {
     expect(row).not.toHaveProperty('avgEntry')
     expect(row).not.toHaveProperty('takeProfit')
     expect(row).not.toHaveProperty('stopLoss')
+  })
+})
+
+describe('trade event parent relationship', () => {
+  it.each(['OPEN', 'CLOSE', 'PNL', 'POSITION_DETAILS'] as const)('writes the parent ID on a %s event', eventType => {
+    const tradeId = 'trade-created-or-resolved-by-db'
+    expect(mapTradeEventInsert({
+      tradeId, eventType, screenshotId: 'screenshot-id', rawData: { symbol: 'BTC/USDT' },
+    }, 'user-id')).toMatchObject({
+      user_id: 'user-id', trade_id: tradeId, event_type: eventType, screenshot_id: 'screenshot-id',
+    })
+  })
+
+  it('preserves separate parent IDs for repeated symbols', () => {
+    const first = mapTradeEventInsert({ tradeId: 'btc-trade-a', eventType: 'CLOSE', rawData: { symbol: 'BTC/USDT' } }, 'user-id')
+    const second = mapTradeEventInsert({ tradeId: 'btc-trade-b', eventType: 'OPEN', rawData: { symbol: 'BTC/USDT' } }, 'user-id')
+    expect(first.trade_id).not.toBe(second.trade_id)
+  })
+
+  it.each([null, undefined, ''])('rejects a missing parent ID before Supabase access (%s)', async tradeId => {
+    expect(() => requireTradeEventId(tradeId)).toThrow('parent trade has not been created or matched')
+    await expect(recordTradeEvent({
+      tradeId: tradeId as string, eventType: 'PNL', rawData: {},
+    })).rejects.toThrow('parent trade has not been created or matched')
   })
 })

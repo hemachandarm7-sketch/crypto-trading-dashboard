@@ -245,15 +245,13 @@ export async function saveUserSettings(settings: UserSettings): Promise<void> {
 }
 
 export async function recordTradeEvent(input: {
-  tradeId: string | null; eventType: 'OPEN' | 'CLOSE' | 'PNL' | 'POSITION_DETAILS'; eventTime?: string
+  tradeId: string; eventType: 'OPEN' | 'CLOSE' | 'PNL' | 'POSITION_DETAILS'; eventTime?: string
   price?: number; percentage?: number; screenshotId?: string | null; rawData: Record<string, unknown>
 }): Promise<void> {
-  const client = requireSupabase()
+  const tradeId = requireTradeEventId(input.tradeId)
   const userId = await ensureSupabaseUser()
-  const event = {
-    user_id: userId, trade_id: input.tradeId, event_type: input.eventType, event_time: input.eventTime ?? null,
-    price: input.price ?? null, percentage: input.percentage ?? null, screenshot_id: input.screenshotId ?? null, raw_data: JSON.parse(JSON.stringify(input.rawData)) as Json,
-  }
+  const event = mapTradeEventInsert({ ...input, tradeId }, userId)
+  const client = requireSupabase()
   if (input.screenshotId) {
     const { data: existing, error: lookupError } = await client.from('trade_events').select('id')
       .eq('user_id', userId).eq('screenshot_id', input.screenshotId).eq('event_type', input.eventType).maybeSingle()
@@ -266,6 +264,30 @@ export async function recordTradeEvent(input: {
   }
   const { error } = await client.from('trade_events').insert(event)
   if (error) throw databaseError('Could not save the trade event', error)
+}
+
+/** Refuse to issue a trade_events write unless the parent trade ID is known. */
+export function requireTradeEventId(tradeId: string | null | undefined): string {
+  if (typeof tradeId !== 'string' || !tradeId.trim()) {
+    throw new Error('Cannot save trade event: the parent trade has not been created or matched.')
+  }
+  return tradeId
+}
+
+export function mapTradeEventInsert(input: {
+  tradeId: string | null | undefined; eventType: 'OPEN' | 'CLOSE' | 'PNL' | 'POSITION_DETAILS'; eventTime?: string
+  price?: number; percentage?: number; screenshotId?: string | null; rawData: Record<string, unknown>
+}, userId: string) {
+  return {
+    user_id: userId,
+    trade_id: requireTradeEventId(input.tradeId),
+    event_type: input.eventType,
+    event_time: input.eventTime ?? null,
+    price: input.price ?? null,
+    percentage: input.percentage ?? null,
+    screenshot_id: input.screenshotId ?? null,
+    raw_data: JSON.parse(JSON.stringify(input.rawData)) as Json,
+  }
 }
 
 export async function updateTradeFromExtraction(id: string, patch: TradeUpdate): Promise<Trade> {

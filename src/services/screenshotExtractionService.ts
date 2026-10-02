@@ -8,6 +8,7 @@ import {
   mapTrade,
   updateTradeFromExtraction,
   recordTradeEvent,
+  requireTradeEventId,
 } from './tradeRepository'
 import { findDuplicateOpenTrade, findOpenTradeForClose, findOpenTradeForPositionDetails, findTradeForPnl, findTradeForOpenTransaction, findUniqueOpenTrade, normalizeSymbol } from './tradeMatchingService'
 import { calculateSpotPnl, determineCloseReason, formatDuration, resolvePnlPercentage } from './tradeLifecycle'
@@ -129,32 +130,24 @@ async function listCurrentTrades(): Promise<Trade[]> {
   return (data ?? []).map(mapTrade)
 }
 
-async function findPendingOpenEvent(userId: string, data: ExtractedTradeData) {
+async function findPendingOpenScreenshot(userId: string, data: ExtractedTradeData) {
   const symbol = normalizeSymbol(data.symbol)
   if (!symbol) return null
   const client = requireSupabase()
-  const { data: events, error } = await client.from('trade_events').select('id,screenshot_id,event_time,raw_data')
-    .eq('user_id', userId).eq('event_type', 'OPEN').is('trade_id', null)
-    .order('created_at', { ascending: false }).limit(200)
+  // Unmatched extraction belongs on screenshots until a trade exists. Production schemas
+  // may require trade_events.trade_id NOT NULL, so pending opens must never be event rows.
+  const { data: screenshots, error } = await client.from('screenshots')
+    .select('id,uploaded_at,extraction_raw_data')
+    .eq('user_id', userId).eq('screenshot_type', 'OPEN_TRANSACTION').is('trade_id', null)
+    .not('extraction_raw_data', 'is', null).order('uploaded_at', { ascending: false }).limit(200)
   if (error) throw error
-  const matches = (events ?? []).filter(event => {
-    const raw = event.raw_data as Record<string, unknown>
+  const matches = (screenshots ?? []).filter(screenshot => {
+    const raw = screenshot.extraction_raw_data as Record<string, unknown>
     return normalizeSymbol(typeof raw.symbol === 'string' ? raw.symbol : undefined) === symbol
-      && (!data.eventTime || !event.event_time || Date.parse(event.event_time) <= Date.parse(data.eventTime))
+      && (!data.direction || !raw.direction || raw.direction === data.direction)
+      && (!data.eventTime || typeof raw.eventTime !== 'string' || Date.parse(raw.eventTime) <= Date.parse(data.eventTime))
   })
   return matches[0] ?? null
-}
-
-async function attachPendingOpenEvent(event: { id: string; screenshot_id: string | null }, userId: string, tradeId: string) {
-  const client = requireSupabase()
-  const { error } = await client.from('trade_events').update({ trade_id: tradeId }).eq('id', event.id).eq('user_id', userId)
-  if (error) throw error
-  if (event.screenshot_id) {
-    const { error: screenshotError } = await client.from('screenshots').update({
-      trade_id: tradeId, extraction_status: 'COMPLETED',
-    }).eq('id', event.screenshot_id).eq('user_id', userId)
-    if (screenshotError) throw screenshotError
-  }
 }
 
 async function detectDuplicateTransaction(userId: string, data: ExtractedTradeData): Promise<string | null> {
@@ -216,8 +209,8 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   if (!matched && data.screenshotType === 'PNL') matched = findTradeForPnl(trades, data)
 
   if (!matched && data.screenshotType === 'POSITION_DETAILS' && data.symbol && data.direction) {
-    const pendingOpen = await findPendingOpenEvent(userId, data)
-    const pendingData = pendingOpen?.raw_data as Partial<ExtractedTradeData> | undefined
+    const pendingOpen = await findPendingOpenScreenshot(userId, data)
+    const pendingData = pendingOpen?.extraction_raw_data as Partial<ExtractedTradeData> | undefined
     const combined: ExtractedTradeData = {
       ...(pendingData ?? {}),
       ...data,
@@ -225,7 +218,16 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
       eventTime: typeof pendingData?.eventTime === 'string' ? pendingData.eventTime : data.eventTime,
     }
     matched = await insertTrade(toDraft(combined))
-    if (pendingOpen) await attachPendingOpenEvent(pendingOpen, userId, matched.id)
+    if (pendingOpen) {
+      // The parent is committed now. Associate the earlier screenshot and create its
+      // OPEN event only after the definitive database ID is available.
+      const parentTradeId = requireTradeEventId(matched.id)
+      await recordEvent(pendingOpen.id, parentTradeId, {
+        ...pendingData,
+        screenshotType: 'OPEN_TRANSACTION',
+      } as ExtractedTradeData, 'OPEN')
+      await updateScreenshot(pendingOpen.id, { trade_id: parentTradeId, extraction_status: 'COMPLETED' })
+    }
   }
 
   if (data.screenshotType === 'OPEN_TRANSACTION' && !matched && data.symbol && data.direction) {
@@ -271,7 +273,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   const tradeId = matched?.id ?? null
   const eventKind: TradeEventType = data.screenshotType === 'CLOSE_TRANSACTION' ? 'CLOSE' : eventType
   if (tradeId) await updateScreenshot(screenshotId, { extraction_status: 'MATCHED' })
-  await recordEvent(screenshotId, tradeId, data, eventKind)
+  if (tradeId) await recordEvent(screenshotId, tradeId, data, eventKind)
   await updateScreenshot(screenshotId, {
     trade_id: tradeId,
     extraction_status: tradeId ? 'COMPLETED' : 'EXTRACTED',
@@ -297,9 +299,9 @@ function eventTypeFor(screenshotType: ScreenshotType): TradeEventType {
   return 'POSITION_DETAILS'
 }
 
-async function recordEvent(screenshotId: string, tradeId: string | null, data: ExtractedTradeData, eventType: TradeEventType) {
+async function recordEvent(screenshotId: string, tradeId: string, data: ExtractedTradeData, eventType: TradeEventType) {
   await recordTradeEvent({
-    screenshotId, tradeId, eventType, eventTime: data.eventTime ?? undefined,
+    screenshotId, tradeId: requireTradeEventId(tradeId), eventType, eventTime: data.eventTime ?? undefined,
     price: data.closePrice ?? data.transactionPrice ?? data.avgEntry ?? undefined,
     percentage: data.pnlPercentage ?? undefined, rawData: toJsonObject(data),
   })
