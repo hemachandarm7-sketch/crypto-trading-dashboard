@@ -16,7 +16,7 @@ export interface Trade {
   symbol: string
   exchange: string | null
   marketType: string | null
-  direction: Direction
+  direction: Direction | null
   leverage: number | null
   quantity: number | null
   size: number | null

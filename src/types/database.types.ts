@@ -3,7 +3,7 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 type Table<Row, Insert, Update> = { Row: Row; Insert: Insert; Update: Update; Relationships: [] }
 type TradeRow = {
   id: string; user_id: string; trade_code: string | null; coin: string | null; symbol: string; exchange: string | null; market_type: string | null
-  direction: 'LONG' | 'SHORT'; leverage: number | null; quantity: number | null; size: number | null
+  direction: 'LONG' | 'SHORT' | null; leverage: number | null; quantity: number | null; size: number | null
   margin: number | null; avg_entry: number | null; ltp: number | null; liquidation_price: number | null
   take_profit: number | null; stop_loss: number | null; open_time: string | null; close_time: string | null
   holding_duration_seconds: number | null; holding_duration_display: string | null; close_price: number | null

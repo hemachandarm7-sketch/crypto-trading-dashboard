@@ -109,6 +109,12 @@ describe('exchange screenshot OCR normalization', () => {
     expect(normalizeExtractedText('RARE/USDT\nSHORT\nQty 0.015\nSize 1500\nMargin 150').leverage).toBeUndefined()
   })
 
+  it('classifies a partial symbol/side/leverage screenshot as position evidence', () => {
+    expect(normalizeExtractedText('BTC/USDT\nLONG 10x')).toMatchObject({
+      screenshotType: 'POSITION_DETAILS', symbol: 'BTC/USDT', direction: 'LONG', leverage: 10,
+    })
+  })
+
   it('recognizes a RARE open transaction and its India-formatted timestamp without treating its fee as P&L', () => {
     const result = normalizeExtractedText(openScreenshotText)
     expect(result).toMatchObject({ screenshotType: 'OPEN_TRANSACTION', symbol: 'RARE/USDT', transactionId: '8567564' })
@@ -392,7 +398,7 @@ describe('repeated-symbol lifecycle matching', () => {
   })
 
   it('matches a close screenshot without direction only when there is one active position for that coin', () => {
-    const closeData: ExtractedTradeData = { screenshotType: 'CLOSE_TRANSACTION', symbol: 'RARE/USDT', eventTime: new Date(2026, 8, 30).toISOString() }
+    const closeData: ExtractedTradeData = { screenshotType: 'CLOSE_TRANSACTION', symbol: 'RARE/USDT', eventTime: new Date(2026, 8, 30).toISOString(), avgEntry: 0.0227 }
     expect(findOpenTradeForClose([rareShort], closeData)).toBe(rareShort)
     expect(findOpenTradeForClose([{ ...rareShort, id: 'other', direction: 'LONG' }, rareShort], closeData)).toBeNull()
   })
@@ -400,6 +406,12 @@ describe('repeated-symbol lifecycle matching', () => {
   it('does not match a closed RARE trade as the current open position', () => {
     expect(findUniqueOpenTrade([{ ...rareShort, status: 'CLOSED' }], {
       screenshotType: 'POSITION_DETAILS', symbol: 'RARE/USDT', direction: 'SHORT',
+    })).toBeNull()
+  })
+
+  it('does not match position details using only symbol, direction, and leverage', () => {
+    expect(findOpenTradeForPositionDetails([rareShort], {
+      screenshotType: 'POSITION_DETAILS', symbol: 'RARE/USDT', direction: 'SHORT', leverage: 10,
     })).toBeNull()
   })
 

@@ -185,6 +185,7 @@ function classify(text: string): ScreenshotType {
   if (transactionAction) return transactionAction.toLowerCase() === 'open' ? 'OPEN_TRANSACTION' : 'CLOSE_TRANSACTION'
   if (/\b(?:Profit\s*%|Loss\s*%|ROI|ROE|P\s*&\s*L|(?:Net|Gross)\s+P(?:NL|&L)|Fees?|Realized\s+Pnl)\b/i.test(text)) return 'PNL'
   if (/\b(?:Qty|Quantity)\b|\bSize\s*\(|\bMargin\s*\(|\bLeverage\b|\bAvg\.?\s*Entry\b|\bLiq\.?\s*Price\b|\bLiquidation\s*Price\b/i.test(text)) return 'POSITION_DETAILS'
+  if (/\b(?:LONG|SHORT)\s+\d+(?:\.\d+)?\s*x\b/i.test(text.replace(/\s+/g, ' '))) return 'POSITION_DETAILS'
   const hasOpen = /\bopen\b/i.test(text)
   const hasClose = /\bclose\b/i.test(text)
   if (hasOpen && hasClose) return 'UNKNOWN'
