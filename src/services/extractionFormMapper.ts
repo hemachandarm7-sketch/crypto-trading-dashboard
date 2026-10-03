@@ -8,7 +8,7 @@ export interface ExtractionFormValues {
 }
 
 const numericFields = [
-  'transactionPrice', 'closePrice', 'leverage', 'quantity', 'size', 'margin', 'avgEntry', 'ltp',
+  'transactionPrice', 'closePrice', 'referenceClosePrice', 'leverage', 'quantity', 'size', 'margin', 'avgEntry', 'ltp',
   'liquidationPrice', 'takeProfit', 'stopLoss', 'pnlAmount', 'grossPnlAmount', 'feeAmount', 'entryNotional', 'pnlPercentage',
 ] as const
 

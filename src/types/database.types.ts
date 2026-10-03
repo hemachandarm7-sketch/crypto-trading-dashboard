@@ -12,7 +12,7 @@ type TradeRow = {
   notes: string | null; exchange_position_id: string | null; open_transaction_id: string | null; close_transaction_id: string | null; created_at: string; updated_at: string
 }
 type ScreenshotRow = {
-  id: string; user_id: string; trade_id: string | null; storage_path: string; screenshot_type: 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
+  id: string; user_id: string; trade_id: string | null; storage_path: string; screenshot_type: 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'ROCKET_TRADE' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
   uploaded_at: string; extracted_at: string | null; extraction_status: 'UPLOADED' | 'PROCESSING' | 'EXTRACTED' | 'MATCHED' | 'COMPLETED' | 'FAILED'
   extraction_raw_data: Json | null; extraction_confidence: number | null; sha256: string; original_name: string; content_type: string; size_bytes: number; created_at: string
 }
@@ -39,7 +39,7 @@ export interface Database {
       trade_direction: 'LONG' | 'SHORT'
       trade_status: 'OPEN' | 'CLOSED'
       trade_close_reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL_CLOSE' | 'UNKNOWN'
-      screenshot_type: 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
+      screenshot_type: 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'ROCKET_TRADE' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
       screenshot_extraction_status: 'UPLOADED' | 'PROCESSING' | 'EXTRACTED' | 'MATCHED' | 'COMPLETED' | 'FAILED'
       trade_event_type: 'OPEN' | 'CLOSE' | 'PNL' | 'POSITION_DETAILS'
     }

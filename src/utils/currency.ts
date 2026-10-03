@@ -1,7 +1,7 @@
 export type CurrencyCode = 'INR' | 'USD' | 'USDT'
 
 export const monetaryFields = [
-  'size', 'margin', 'transactionPrice', 'closePrice', 'avgEntry', 'ltp',
+  'size', 'margin', 'transactionPrice', 'closePrice', 'referenceClosePrice', 'avgEntry', 'ltp',
   'closeNotional', 'liquidationPrice', 'takeProfit', 'stopLoss', 'pnlAmount',
   'grossPnlAmount', 'feeAmount', 'entryNotional',
 ] as const

@@ -8,7 +8,7 @@ const sourceRank: Record<ExtractionFieldProvenance['source'], number> = {
 }
 
 const evidenceFields = [
-  'symbol', 'direction', 'transactionPrice', 'closePrice', 'closeNotional', 'leverage', 'quantity', 'size', 'margin',
+  'symbol', 'quoteCurrency', 'direction', 'pnlType', 'classificationConfidence', 'transactionPrice', 'closePrice', 'referenceClosePrice', 'closeNotional', 'leverage', 'quantity', 'size', 'margin',
   'avgEntry', 'ltp', 'liquidationPrice', 'takeProfit', 'stopLoss', 'pnlAmount', 'grossPnlAmount',
   'feeAmount', 'entryNotional', 'pnlPercentage', 'transactionId', 'positionId', 'exchange', 'marketType', 'marginMode',
 ] as const

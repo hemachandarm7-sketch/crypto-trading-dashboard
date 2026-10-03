@@ -194,8 +194,8 @@ describe('exchange screenshot OCR normalization', () => {
       'Gross PNL -2.101 USDT', 'Net PNL -2.163 USDT', 'Fees 0.062 USDT',
     ].join('\n'))
     expect(parsed).toMatchObject({
-      screenshotType: 'PNL', symbol: 'WLD/USDT', direction: 'LONG', leverage: 10,
-      avgEntry: 0.558, closePrice: 0.547, grossPnlAmount: -2.101, pnlAmount: -2.163,
+      screenshotType: 'ROCKET_TRADE', symbol: 'WLD/USDT', direction: 'LONG', leverage: 10,
+      avgEntry: 0.558, referenceClosePrice: 0.547, closePrice: undefined, pnlType: 'LOSS', grossPnlAmount: -2.101, pnlAmount: -2.163,
       feeAmount: 0.062, pnlPercentage: -19.63,
     })
     expect(parsed.fieldCurrencies).toMatchObject({ grossPnlAmount: 'USDT', pnlAmount: 'USDT', feeAmount: 'USDT' })
@@ -203,6 +203,49 @@ describe('exchange screenshot OCR normalization', () => {
 
   it.each(['ROI +208.65%', 'ROE +208.65%', 'Profit % +208.65%'])('accepts exchange percentage label %s', label => {
     expect(normalizeExtractedText(`RARE/USDT\nSHORT 10x\n${label}`).pnlPercentage).toBe(208.65)
+  })
+
+  it.each([
+    ['Profit % +8.42%', 'PROFIT', 8.42],
+    ['Profit% +8.42%', 'PROFIT', 8.42],
+    ['Loss % -19.63%', 'LOSS', -19.63],
+    ['Loss% 19.63%', 'LOSS', -19.63],
+    ['Prof it % 8.42%', 'PROFIT', 8.42],
+    ['Proflt % 8.42%', 'PROFIT', 8.42],
+    ['P r o f i t % 8.42%', 'PROFIT', 8.42],
+    ['Proﬁt % 8.42%', 'PROFIT', 8.42],
+  ] as const)('classifies OCR percentage label %s as a rocket summary', (label, pnlType, pnlPercentage) => {
+    const result = normalizeExtractedText(`WLD • USDT\nLong 10 x\n${label}\nEntry Price 0.558\nClose price 0.547`)
+    expect(result).toMatchObject({
+      screenshotType: 'ROCKET_TRADE', symbol: 'WLD/USDT', quoteCurrency: 'USDT', direction: 'LONG', leverage: 10,
+      pnlType, pnlPercentage, avgEntry: 0.558, referenceClosePrice: 0.547, classificationConfidence: 'VERY_HIGH',
+    })
+    expect(result.closePrice).toBeUndefined()
+    expect(result.fieldCurrencies?.referenceClosePrice).toBe('USDT')
+  })
+
+  it('preserves the exact OCR text and still classifies a rocket with missing side or leverage', () => {
+    const raw = 'WLD • USDT\nProf it %\n19.63%'
+    const result = normalizeExtractedText(raw)
+    expect(result.screenshotType).toBe('ROCKET_TRADE')
+    expect(result.direction).toBeUndefined()
+    expect(result.leverage).toBeUndefined()
+    expect(result.rawText).toBe(raw)
+    expect(result.classificationConfidence).toBe('HIGH')
+    expect(normalizeExtractedText('SHORT 10x').leverage).toBe(10)
+  })
+
+  it('does not run explicit USDT rocket prices through INR conversion', async () => {
+    vi.mocked(getInrToUsdRate).mockClear()
+    const extracted = normalizeExtractedText('WLD • USDT\nLONG 10x\nLoss% 19.63%\nEntry Price 0.558\nClose price 0.547')
+    const normalized = await normalizeScreenshotCurrencies(extracted)
+    expect(normalized.referenceClosePrice).toBe(0.547)
+    expect(normalized.currencyAudit?.referenceClosePrice).toMatchObject({ originalValue: 0.547, originalCurrency: 'USDT', usdRate: 1 })
+    expect(getInrToUsdRate).not.toHaveBeenCalled()
+  })
+
+  it('keeps explicit transaction type classification ahead of rocket percentage labels', () => {
+    expect(normalizeExtractedText('Transaction type Close\nLoss % -19.63%\nClose price 0.547').screenshotType).toBe('CLOSE_TRANSACTION')
   })
 
   it('prefers the explicit USDT equivalent when a transaction screenshot also shows rupees', async () => {

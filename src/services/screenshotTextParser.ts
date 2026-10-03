@@ -1,5 +1,5 @@
 import type { Direction, ExtractedTradeData, ScreenshotType } from '../types'
-import { parsePnlPercentage } from './tradeLifecycle'
+import { detectLabeledPnlType, normalizeProfitLossLabels, parsePnlPercentage } from './tradeLifecycle'
 import { detectCurrency, type CurrencyCode, type MonetaryField } from '../utils/currency'
 
 function labeledNumber(text: string, label: string): number | undefined {
@@ -183,7 +183,8 @@ function classify(text: string): ScreenshotType {
   const transactionDetails = text.match(/Transaction\s+Details[\s\S]{0,300}/i)?.[0]
   const transactionAction = transactionDetails?.match(/\b(Open|Close)\b/i)?.[1]
   if (transactionAction) return transactionAction.toLowerCase() === 'open' ? 'OPEN_TRANSACTION' : 'CLOSE_TRANSACTION'
-  if (/\b(?:Profit\s*%|Loss\s*%|ROI|ROE|P\s*&\s*L|(?:Net|Gross)\s+P(?:NL|&L)|Fees?|Realized\s+Pnl)\b/i.test(text)) return 'PNL'
+  if (detectLabeledPnlType(text)) return 'ROCKET_TRADE'
+  if (/\b(?:ROI|ROE|P\s*&\s*L|(?:Net|Gross)\s+P(?:NL|&L)|Fees?|Realized\s+Pnl)\b/i.test(text)) return 'PNL'
   if (/\b(?:Qty|Quantity)\b|\bSize\s*\(|\bMargin\s*\(|\bLeverage\b|\bAvg\.?\s*Entry\b|\bLiq\.?\s*Price\b|\bLiquidation\s*Price\b/i.test(text)) return 'POSITION_DETAILS'
   if (/\b(?:LONG|SHORT)\s+\d+(?:\.\d+)?\s*x\b/i.test(text.replace(/\s+/g, ' '))) return 'POSITION_DETAILS'
   const hasOpen = /\bopen\b/i.test(text)
@@ -209,10 +210,14 @@ function extractSymbol(text: string): string | undefined {
 }
 
 export function normalizeExtractedText(text: string, confidence?: number): ExtractedTradeData {
+  const rawText = text
   // Normalize common Indian currency spelling so the labelled-number parser
   // can read it without losing the explicit INR signal.
   text = text.replace(/\bRs\.?[ \t]*(?=\d)/gi, '₹')
-  const screenshotType = classify(text)
+  const semanticText = normalizeProfitLossLabels(text)
+  const screenshotType = classify(semanticText)
+  const pnlType = detectLabeledPnlType(semanticText)
+  const quoteCurrency = text.match(/\b(?:USDT|USDC|USD|BTC|ETH)\b/i)?.[0]?.toUpperCase() ?? null
   const symbol = text.match(/\b(?:Symbol|Pair|Contract)\s*[:=#]?\s*([A-Z0-9]{2,}(?:\s*[/_-]\s*[A-Z0-9]{2,})?)/i)?.[1]
     ?? text.match(/\b([A-Z0-9]{2,}\s*\/\s*(?:USDT|USDC|USD|BTC|ETH))\b/i)?.[1]
   const normalizedSymbol = extractSymbol(text) ?? symbol?.replace(/\s/g, '').replace(/_/g, '/').replace(/-/g, '/').toUpperCase()
@@ -230,12 +235,14 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const liquidationPrice = labeledNumber(text, '(?:Li[qg]\\.?\\s*Price|Liquidation\\s*Price)')
   const takeProfit = labeledNumber(text, '(?:TP|Take\\s*Profit)')
   const stopLoss = labeledNumber(text, '(?:SL|Stop\\s*Loss)')
-  const closePrice = labeledNumber(text, '(?:Close\\s*Price|Exit\\s*Price)')
+  const parsedClosePrice = labeledNumber(text, '(?:Close\\s*Price|Exit\\s*Price)')
+  const referenceClosePrice = screenshotType === 'ROCKET_TRADE' ? parsedClosePrice : undefined
+  const closePrice = screenshotType === 'ROCKET_TRADE' ? undefined : parsedClosePrice
   const transactionPrice = labeledNumber(text, '(?:Transaction\\s*Price|Price)')
   const grossPnlAmount = labeledAmount(text, 'Gross\\s+P(?:NL|&L)')
   const feeAmount = labeledAmount(text, 'Fees?')
-  const pnlAmount = screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' ? labeledAmount(text, 'Net\\s+P(?:NL|&L)') : undefined
-  const pnlPercentage = parsePnlPercentage(text)
+  const pnlAmount = screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' || screenshotType === 'ROCKET_TRADE' ? labeledAmount(semanticText, 'Net\\s+P(?:NL|&L)') : undefined
+  const pnlPercentage = parsePnlPercentage(semanticText)
   const transactionId = text.match(/\b(?:Transaction|Order|Trade)\s*(?:ID|No\.?|#)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
   const positionId = text.match(/\b(?:Position\s*ID|Position\s*No\.?|Contract\s*ID)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
   const exchange = text.match(/\b(?:Exchange|Platform)\s*[:=#]?\s*([A-Z][A-Z0-9_-]+)/i)?.[1]
@@ -243,13 +250,13 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const marginMode = text.match(/\b(Isolated|Cross)\b/i)?.[1]?.toUpperCase() as 'ISOLATED' | 'CROSS' | undefined
   const fieldCurrencies: Partial<Record<MonetaryField, CurrencyCode>> = {}
   const fieldValues: Partial<Record<MonetaryField, number | undefined>> = {
-    size, margin, transactionPrice, closePrice, avgEntry, ltp, liquidationPrice, takeProfit, stopLoss,
+    size, margin, transactionPrice, closePrice, referenceClosePrice, avgEntry, ltp, liquidationPrice, takeProfit, stopLoss,
     pnlAmount, grossPnlAmount, feeAmount,
   }
   const currencyAudit: NonNullable<ExtractedTradeData['currencyAudit']> = {}
   const currencyCandidates: [MonetaryField, string][] = [
     ['size', '\\bSize\\b'], ['margin', '\\bMargin(?:\\s+Used)?\\b'], ['transactionPrice', '\\b(?:Transaction\\s+)?Price\\b'],
-    ['closePrice', '\\b(?:Close|Exit)\\s+Price\\b'], ['avgEntry', '\\b(?:Avg\\.?\\s*Entry|Average\\s*Entry|Entry\\s*Price)\\b'],
+    [screenshotType === 'ROCKET_TRADE' ? 'referenceClosePrice' : 'closePrice', '\\b(?:Close|Exit)\\s+Price\\b'], ['avgEntry', '\\b(?:Avg\\.?\\s*Entry|Average\\s*Entry|Entry\\s*Price)\\b'],
     ['ltp', '\\b(?:LTP|Last\\s*Traded\\s*Price)\\b'], ['liquidationPrice', '\\b(?:Li[qg]\\.?\\s*Price|Liquidation\\s*Price)\\b'],
     ['takeProfit', '\\b(?:TP|Take\\s*Profit)\\b'], ['stopLoss', '\\b(?:SL|Stop\\s*Loss)\\b'],
     ['pnlAmount', '\\b(?:Net\\s+P(?:NL|&L)|P\\s*&\\s*L|Profit|Loss)\\b'],
@@ -279,20 +286,24 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
       }
     }
   }
-  if (screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL') {
+  if (screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' || screenshotType === 'ROCKET_TRADE') {
     if (pnlAmount != null && labeledUsdtAmount(text, 'Net\\s+P(?:NL|&L)') != null) fieldCurrencies.pnlAmount = 'USDT'
     else if (pnlAmount != null && !fieldCurrencies.pnlAmount) fieldCurrencies.pnlAmount = detectCurrency(text) ?? undefined
   }
   const fieldProvenance = Object.fromEntries(Object.entries({
-    symbol: normalizedSymbol, direction, eventTime: parseOcrEventTime(text), transactionPrice, closePrice,
+    symbol: normalizedSymbol, direction, pnlType, eventTime: parseOcrEventTime(text), transactionPrice, closePrice, referenceClosePrice,
     leverage, quantity, size, margin, avgEntry, ltp, liquidationPrice, takeProfit, stopLoss,
     pnlAmount, grossPnlAmount, feeAmount, pnlPercentage: pnlPercentage ?? undefined,
   }).filter(([, value]) => value != null).map(([field]) => [field, { source: 'direct_ocr' as const }]))
+  const evidenceCount = [normalizedSymbol, direction, leverage, avgEntry, referenceClosePrice, pnlPercentage].filter(value => value != null).length
+  const classificationConfidence = screenshotType === 'ROCKET_TRADE'
+    ? evidenceCount >= 5 ? 'VERY_HIGH' as const : 'HIGH' as const
+    : undefined
   return {
-    screenshotType, symbol: normalizedSymbol, direction,
-    eventTime: parseOcrEventTime(text), closePrice, transactionPrice, leverage, quantity, size, margin, avgEntry, ltp,
+    screenshotType, classificationConfidence, symbol: normalizedSymbol, quoteCurrency, direction, pnlType,
+    eventTime: parseOcrEventTime(text), closePrice, referenceClosePrice, transactionPrice, leverage, quantity, size, margin, avgEntry, ltp,
     liquidationPrice, takeProfit, stopLoss, pnlAmount, grossPnlAmount, feeAmount, pnlPercentage: pnlPercentage ?? undefined, transactionId, positionId, exchange,
     marketType: marketType?.toLowerCase() === 'spot' ? 'Spot' : marketType ? marketType[0].toUpperCase() + marketType.slice(1).toLowerCase() : undefined,
-    marginMode, rawText: text, confidence, fieldCurrencies, fieldProvenance, currencyAudit,
+    marginMode, rawText, confidence, fieldCurrencies, fieldProvenance, currencyAudit,
   }
 }

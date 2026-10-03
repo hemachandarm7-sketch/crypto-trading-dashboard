@@ -31,10 +31,16 @@ describe('mapExtractionToForm', () => {
     expect(mapExtractionToForm({ screenshotType: 'UNKNOWN' })).toEqual({
       symbol: '', direction: '', eventTime: '',
       values: {
-        transactionPrice: '', closePrice: '', leverage: '', quantity: '', size: '', margin: '',
+        transactionPrice: '', closePrice: '', referenceClosePrice: '', leverage: '', quantity: '', size: '', margin: '',
         avgEntry: '', ltp: '', liquidationPrice: '', takeProfit: '', stopLoss: '', pnlAmount: '', pnlPercentage: '',
         grossPnlAmount: '', feeAmount: '', entryNotional: '',
       },
     })
+  })
+
+  it('maps a rocket reference close into its distinct editable field', () => {
+    const result = mapExtractionToForm({ screenshotType: 'ROCKET_TRADE', referenceClosePrice: 0.547 })
+    expect(result.values.referenceClosePrice).toBe('0.547')
+    expect(result.values.closePrice).toBe('')
   })
 })

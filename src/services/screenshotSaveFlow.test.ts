@@ -29,7 +29,9 @@ vi.mock('./tradeRepository', () => ({
   updateScreenshot: async (id: string, patch: Record<string, unknown>) => { state.screenshotUpdates.push({ id, patch }) },
   insertTrade: async (draft: Record<string, unknown>, key?: string) => {
     state.inserted.push({ draft, key })
-    return { id: key ?? 'created-trade', ...draft, createdAt: '', updatedAt: '' }
+    const created = { id: key ?? 'created-trade', ...draft, createdAt: '', updatedAt: '' }
+    state.existingTrades.push(created)
+    return created
   },
   mapTrade: (row: unknown) => row,
   updateTradeFromExtraction: async (id: string, patch: Record<string, unknown>) => {
@@ -104,6 +106,54 @@ describe('partial screenshot confirmation', () => {
         liquidationPrice: null, takeProfit: null, stopLoss: null,
       },
     })
+  })
+
+  it('creates an unmatched rocket summary as a partial OPEN trade and records PNL evidence', async () => {
+    await applyExtraction('rocket-shot', {
+      screenshotType: 'ROCKET_TRADE', classificationConfidence: 'VERY_HIGH', symbol: 'WLD/USDT',
+      quoteCurrency: 'USDT', direction: 'LONG', leverage: 10, pnlType: 'LOSS', pnlPercentage: -19.63,
+      avgEntry: 0.558, referenceClosePrice: 0.547, grossPnlAmount: -2.101, pnlAmount: -2.163,
+      fieldCurrencies: { avgEntry: 'USDT', referenceClosePrice: 'USDT', grossPnlAmount: 'USDT', pnlAmount: 'USDT' },
+    })
+    expect(state.inserted).toHaveLength(1)
+    expect(state.inserted[0]).toMatchObject({
+      key: 'rocket-shot', draft: { symbol: 'WLD/USDT', direction: 'LONG', leverage: 10, status: 'OPEN', closeTime: null, closePrice: null, avgEntry: 0.558, pnlPercentage: -19.63 },
+    })
+    expect(state.events).toHaveLength(1)
+    expect(state.events[0]).toMatchObject({ tradeId: 'rocket-shot', eventType: 'PNL', percentage: -19.63, price: 0.547 })
+    expect(state.events[0]).not.toHaveProperty('closePrice')
+  })
+
+  it('merges OPEN, rocket summary, and actual CLOSE evidence into one trade', async () => {
+    await applyExtraction('open-shot', {
+      screenshotType: 'OPEN_TRANSACTION', symbol: 'WLD/USDT', eventTime: '2026-09-28T01:51:31.000Z', transactionId: 'open-order',
+    })
+    await applyExtraction('rocket-shot', {
+      screenshotType: 'ROCKET_TRADE', symbol: 'WLD/USDT', direction: 'LONG', leverage: 10,
+      avgEntry: 0.558, referenceClosePrice: 0.547, pnlPercentage: -19.63,
+    }, 'open-shot')
+    await applyExtraction('actual-close-shot', {
+      screenshotType: 'CLOSE_TRANSACTION', symbol: 'WLD/USDT', direction: 'LONG',
+      eventTime: '2026-10-01T02:00:00.000Z', closePrice: 0.547, pnlAmount: -2.163,
+    }, 'open-shot')
+    expect(state.inserted).toHaveLength(1)
+    expect(state.updates).toContainEqual(expect.objectContaining({
+      id: 'open-shot', patch: expect.objectContaining({ status: 'CLOSED', closePrice: 0.547 }),
+    }))
+    expect(state.events.map(event => event.eventType)).toEqual(['OPEN', 'PNL', 'CLOSE'])
+  })
+
+  it('enriches a strongly matching existing trade with rocket evidence without duplicating it', async () => {
+    state.existingTrades = [rareTrade]
+    await applyExtraction('rocket-shot', {
+      screenshotType: 'ROCKET_TRADE', symbol: 'RARE/USDT', direction: 'SHORT', leverage: 10,
+      avgEntry: 0.0227, referenceClosePrice: 0.01795, pnlType: 'PROFIT', pnlPercentage: 208.65,
+    })
+    expect(state.inserted).toHaveLength(0)
+    const update = state.updates.find(item => item.id === 'existing-rare')
+    expect(update?.patch).toMatchObject({ pnlPercentage: 208.65 })
+    expect(update?.patch).not.toHaveProperty('status')
+    expect(state.events).toContainEqual(expect.objectContaining({ tradeId: 'existing-rare', eventType: 'PNL' }))
   })
 
   it('enriches a confidently matched position from later quantity and entry evidence without inserting another trade', async () => {

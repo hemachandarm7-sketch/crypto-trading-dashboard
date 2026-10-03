@@ -1,7 +1,9 @@
 export type Direction = 'LONG' | 'SHORT'
 export type TradeStatus = 'OPEN' | 'CLOSED'
 export type CloseReason = 'TP_HIT' | 'SL_HIT' | 'MANUAL_CLOSE' | 'UNKNOWN'
-export type ScreenshotType = 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
+export type ScreenshotType = 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'ROCKET_TRADE' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
+export type PnlType = 'PROFIT' | 'LOSS'
+export type ScreenshotClassificationConfidence = 'HIGH' | 'VERY_HIGH'
 export type ExtractionStatus = 'UPLOADED' | 'PROCESSING' | 'EXTRACTED' | 'MATCHED' | 'COMPLETED' | 'FAILED'
 export type ExtractionFieldSource = 'direct_ocr' | 'calculated' | 'estimated' | 'user_corrected'
 export interface ExtractionFieldProvenance {
@@ -46,11 +48,16 @@ export interface Trade {
 
 export interface ExtractedTradeData {
   screenshotType: ScreenshotType
+  classificationConfidence?: ScreenshotClassificationConfidence
   symbol?: string | null
+  quoteCurrency?: string | null
   direction?: Direction | null
+  pnlType?: PnlType | null
   eventTime?: string | null
   transactionPrice?: number | null
   closePrice?: number | null
+  /** Summary/estimated exit from a rocket card; never a lifecycle close price. */
+  referenceClosePrice?: number | null
   closeNotional?: number | null
   leverage?: number | null
   quantity?: number | null

@@ -340,7 +340,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
     : trades.find(trade => trade.id === screenshotRow.data.trade_id)
       ?? trades.find(trade => trade.id === screenshotId)
       ?? null
-  if (!forceCreateNew && matched && data.screenshotType !== 'PNL' && matched.status !== 'OPEN') matched = null
+  if (!forceCreateNew && matched && data.screenshotType !== 'PNL' && data.screenshotType !== 'ROCKET_TRADE' && matched.status !== 'OPEN') matched = null
   const eventType: TradeEventType = eventTypeFor(data.screenshotType)
   if (data.screenshotType === 'UNKNOWN' || (!data.symbol && !matched)) {
     await updateScreenshot(screenshotId, {
@@ -354,6 +354,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   if (!forceCreateNew && !matched && data.screenshotType === 'CLOSE_TRANSACTION') matched = findOpenTradeForClose(trades, data)
   if (!forceCreateNew && !matched && data.screenshotType === 'POSITION_DETAILS') matched = findOpenTradeForPositionDetails(trades, data)
   if (!forceCreateNew && !matched && data.screenshotType === 'PNL') matched = findTradeForPnl(trades, data)
+  if (!forceCreateNew && !matched && data.screenshotType === 'ROCKET_TRADE') matched = findTradeForPnl(trades, data)
 
   const sameSideOpenTrades = data.symbol && data.direction ? trades.filter(trade => trade.status === 'OPEN'
     && normalizeSymbol(trade.symbol) === normalizeSymbol(data.symbol)
@@ -407,7 +408,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
       } : {}),
     }
     if (Object.keys(patch).length) matched = await updateTradeFromExtraction(matched.id, patch)
-  } else if (matched && (data.screenshotType === 'POSITION_DETAILS' || data.screenshotType === 'PNL' || data.screenshotType === 'CLOSE_TRANSACTION')) {
+  } else if (matched && (data.screenshotType === 'POSITION_DETAILS' || data.screenshotType === 'PNL' || data.screenshotType === 'ROCKET_TRADE' || data.screenshotType === 'CLOSE_TRANSACTION')) {
     // Events are the durable evidence ledger. Combine the screenshots attached
     // to this exact trade ID before updating current trade fields.
     const priorEvents = await listTradeEvents(matched.id)
@@ -418,7 +419,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
 
     if (data.screenshotType === 'POSITION_DETAILS') {
       matched = await updateTradeFromExtraction(matched.id, nonNullPatch(evidence))
-    } else if (data.screenshotType === 'PNL') {
+    } else if (data.screenshotType === 'PNL' || data.screenshotType === 'ROCKET_TRADE') {
       const pnlPercentage = resolvePnlPercentage(evidence.pnlPercentage ?? null, null, matched.pnlPercentage, evidence.pnlAmount ?? matched.pnlAmount, evidence.margin ?? matched.margin)
       matched = await updateTradeFromExtraction(matched.id, {
         ...nonNullPatch(evidence),
@@ -473,14 +474,14 @@ async function getDedicatedPnlPercentage(userId: string, tradeId: string): Promi
 function eventTypeFor(screenshotType: ScreenshotType): TradeEventType {
   if (screenshotType === 'OPEN_TRANSACTION') return 'OPEN'
   if (screenshotType === 'CLOSE_TRANSACTION') return 'CLOSE'
-  if (screenshotType === 'PNL') return 'PNL'
+  if (screenshotType === 'PNL' || screenshotType === 'ROCKET_TRADE') return 'PNL'
   return 'POSITION_DETAILS'
 }
 
 async function recordEvent(screenshotId: string, tradeId: string, data: ExtractedTradeData, eventType: TradeEventType) {
   await recordTradeEvent({
     screenshotId, tradeId: requireTradeEventId(tradeId), eventType, eventTime: data.eventTime ?? undefined,
-    price: data.closePrice ?? data.transactionPrice ?? data.avgEntry ?? undefined,
+    price: data.closePrice ?? data.referenceClosePrice ?? data.transactionPrice ?? data.avgEntry ?? undefined,
     percentage: data.pnlPercentage ?? undefined, rawData: toJsonObject(data),
   })
 }

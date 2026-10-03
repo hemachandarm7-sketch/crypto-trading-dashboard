@@ -72,9 +72,27 @@ export function resolvePnlPercentage(
   return null
 }
 
+export type LabeledPnlType = 'PROFIT' | 'LOSS'
+
+/** Repair common OCR glyph/spacing errors only for semantic label matching. */
+export function normalizeProfitLossLabels(text: string): string {
+  return text.normalize('NFKC')
+    .replace(/\bp\s*r\s*[o0]\s*f\s*[i1l]\s*t\b/gi, 'Profit')
+    .replace(/\bl\s*[o0]\s*s\s*s\b/gi, 'Loss')
+}
+
+export function detectLabeledPnlType(text: string): LabeledPnlType | null {
+  const normalized = normalizeProfitLossLabels(text)
+  const hasProfit = /\bprofit\s*[.:=_-]*\s*%/i.test(normalized)
+  const hasLoss = /\bloss\s*[.:=_-]*\s*%/i.test(normalized)
+  if (hasProfit === hasLoss) return null
+  return hasProfit ? 'PROFIT' : 'LOSS'
+}
+
 export function parsePnlPercentage(text: string): number | null {
-  const profit = text.match(/\bProfit\s*%\s*[:=]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
-  const loss = text.match(/\bLoss\s*%\s*[:=]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
+  const normalized = normalizeProfitLossLabels(text)
+  const profit = normalized.match(/\bprofit\s*[.:=_-]*\s*%\s*[:=]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
+  const loss = normalized.match(/\bloss\s*[.:=_-]*\s*%\s*[:=]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
   if (profit && loss) return null
   if (profit) return Math.abs(Number(profit[1].replace(/\s/g, '')))
   if (loss) return -Math.abs(Number(loss[1].replace(/\s/g, '')))
