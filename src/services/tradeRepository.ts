@@ -33,10 +33,19 @@ export function mapTrade(row: TradeRow): Trade {
 }
 
 export function mapScreenshot(row: ScreenshotRow, previewUrl?: string): Screenshot {
+  const extractionRawData = row.extraction_raw_data && typeof row.extraction_raw_data === 'object' && !Array.isArray(row.extraction_raw_data)
+    ? row.extraction_raw_data as Record<string, unknown>
+    : null
+  const extractedType = extractionRawData?.screenshotType
+  const screenshotTypes = ['OPEN_TRANSACTION', 'CLOSE_TRANSACTION', 'ROCKET_TRADE', 'PNL', 'POSITION_DETAILS', 'UNKNOWN']
   return {
-    id: row.id, tradeId: row.trade_id, storagePath: row.storage_path, screenshotType: row.screenshot_type,
+    id: row.id, tradeId: row.trade_id, storagePath: row.storage_path,
+    // Older production databases may not yet have the additive ROCKET_TRADE
+    // enum migration. In that case the DB column is stored as PNL, while the
+    // normalized extraction JSON remains the source of the precise subtype.
+    screenshotType: screenshotTypes.includes(String(extractedType)) ? extractedType as Screenshot['screenshotType'] : row.screenshot_type,
     uploadedAt: row.uploaded_at, extractedAt: row.extracted_at, extractionStatus: row.extraction_status,
-    extractionRawData: row.extraction_raw_data && typeof row.extraction_raw_data === 'object' && !Array.isArray(row.extraction_raw_data) ? row.extraction_raw_data as Record<string, unknown> : null,
+    extractionRawData,
     extractionConfidence: row.extraction_confidence, sha256: row.sha256, originalName: row.original_name,
     contentType: row.content_type, sizeBytes: row.size_bytes, previewUrl,
   }
@@ -235,7 +244,20 @@ export async function updateScreenshot(id: string, patch: Database['public']['Ta
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
   const { error } = await client.from('screenshots').update(patch).eq('id', id).eq('user_id', userId)
-  if (error) throw databaseError('Supabase screenshot update failed', error)
+  if (!error) return
+
+  // ROCKET_TRADE is an additive enum value. Some already-deployed databases
+  // may still be on the prior enum definition while their migration is
+  // pending. Keep the semantic type in extraction_raw_data and use the
+  // existing PNL enum only as a storage-compatible fallback.
+  if (patch.screenshot_type === 'ROCKET_TRADE' && error.code === '22P02') {
+    trace('[SUPABASE SCREENSHOT] ROCKET_TRADE enum unavailable; retrying with PNL storage type')
+    const fallbackPatch = { ...patch, screenshot_type: 'PNL' as const }
+    const fallback = await client.from('screenshots').update(fallbackPatch).eq('id', id).eq('user_id', userId)
+    if (!fallback.error) return
+    throw databaseError('Supabase screenshot update failed (ROCKET_TRADE compatibility fallback)', fallback.error)
+  }
+  throw databaseError('Supabase screenshot update failed', error)
 }
 
 export async function associateScreenshot(screenshotId: string, tradeId: string | null): Promise<void> {

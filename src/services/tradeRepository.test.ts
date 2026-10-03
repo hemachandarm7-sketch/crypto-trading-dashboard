@@ -4,7 +4,7 @@ vi.mock('./supabaseClient', () => ({
   requireSupabase: () => supabaseMock.client,
   ensureSupabaseUser: async () => 'user-uuid',
 }))
-import { insertTrade, mapFormToTradeInsert, mapTradeEventInsert, recordTradeEvent, requireTradeEventId } from './tradeRepository'
+import { insertTrade, mapFormToTradeInsert, mapScreenshot, mapTradeEventInsert, recordTradeEvent, requireTradeEventId, updateScreenshot } from './tradeRepository'
 import type { TradeDraft } from './tradeRepository'
 
 const draft: TradeDraft = {
@@ -72,6 +72,40 @@ describe('insertTrade persistence', () => {
 
     supabaseMock.client.from.mockReturnValueOnce(query({ error: { code: '42501', message: 'row-level security policy denied' } }))
     await expect(insertTrade(draft, 'different-screenshot')).rejects.toThrow('Supabase trade insert failed (42501): row-level security policy denied')
+  })
+})
+
+describe('rocket screenshot persistence compatibility', () => {
+  it('retries the enum write as PNL on legacy schemas while retaining ROCKET_TRADE in extraction JSON', async () => {
+    const updates: Record<string, unknown>[] = []
+    const makeUpdate = (error: { code: string; message: string } | null) => {
+      const chain: Record<string, unknown> = {}
+      chain.update = vi.fn((patch: Record<string, unknown>) => { updates.push(patch); return chain })
+      chain.eq = vi.fn(() => chain)
+      chain.then = (resolve: (value: { error: typeof error }) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve({ error }).then(resolve, reject)
+      return chain
+    }
+    supabaseMock.client.from
+      .mockReturnValueOnce(makeUpdate({ code: '22P02', message: 'invalid input value for enum screenshot_type' }))
+      .mockReturnValueOnce(makeUpdate(null))
+
+    const extraction = { screenshotType: 'ROCKET_TRADE', rawText: 'WLD • USDT\nLoss % -19.63%' }
+    await updateScreenshot('shot-id', {
+      screenshot_type: 'ROCKET_TRADE', extraction_status: 'EXTRACTED',
+      extraction_raw_data: extraction as never,
+    })
+
+    expect(updates[0]).toMatchObject({ screenshot_type: 'ROCKET_TRADE' })
+    expect(updates[1]).toMatchObject({ screenshot_type: 'PNL', extraction_raw_data: extraction })
+  })
+
+  it('restores the semantic rocket type from extraction data stored on a legacy PNL row', () => {
+    const row = {
+      id: 'shot-id', trade_id: null, storage_path: 'user/shot.png', screenshot_type: 'PNL', uploaded_at: '',
+      extracted_at: '', extraction_status: 'EXTRACTED', extraction_raw_data: { screenshotType: 'ROCKET_TRADE', rawText: 'WLD' },
+      extraction_confidence: 0.9, sha256: 'hash', original_name: 'shot.png', content_type: 'image/png', size_bytes: 12,
+    } as unknown as Parameters<typeof mapScreenshot>[0]
+    expect(mapScreenshot(row).screenshotType).toBe('ROCKET_TRADE')
   })
 })
 

@@ -78,7 +78,7 @@ export type LabeledPnlType = 'PROFIT' | 'LOSS'
 export function normalizeProfitLossLabels(text: string): string {
   return text.normalize('NFKC')
     .replace(/\bp\s*r\s*[o0]\s*f\s*[i1l]\s*t\b/gi, 'Profit')
-    .replace(/\bl\s*[o0]\s*s\s*s\b/gi, 'Loss')
+    .replace(/\bl\s*[o0]\s*[s5]\s*[s5]\b/gi, 'Loss')
 }
 
 export function detectLabeledPnlType(text: string): LabeledPnlType | null {

@@ -9,7 +9,26 @@ function labeledNumber(text: string, label: string): number | undefined {
     const parsed = Number(value.replace(/,/g, ''))
     if (Number.isFinite(parsed)) return parsed
   }
-  return labeledGridNumber(text, label)
+  const gridValue = labeledGridNumber(text, label)
+  if (gridValue != null) return gridValue
+  // Some share-card OCR engines place the label and value on adjacent lines.
+  // Accept only a standalone numeric next line so a later field cannot leak
+  // into the current label (especially Close price vs. liquidation/margin).
+  const lines = text.split(/\r?\n/)
+  for (let index = 0; index < lines.length; index++) {
+    if (!new RegExp('(?:^|\\b)' + label, 'i').test(lines[index])) continue
+    for (let next = index + 1; next < lines.length && next <= index + 2; next++) {
+      const candidate = lines[next].trim()
+      if (!candidate) continue
+      const standalone = candidate.match(/^[₹$]?\s*([+-]?[\d,]+(?:\.\d+)?)\s*(?:%|INR|USD|USDT|USDC)?$/i)?.[1]
+      if (standalone) {
+        const parsed = Number(standalone.replace(/,/g, ''))
+        if (Number.isFinite(parsed)) return parsed
+      }
+      break
+    }
+  }
+  return undefined
 }
 
 function labeledAmount(text: string, label: string): number | undefined {
@@ -299,8 +318,16 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const classificationConfidence = screenshotType === 'ROCKET_TRADE'
     ? evidenceCount >= 5 ? 'VERY_HIGH' as const : 'HIGH' as const
     : undefined
+  const classificationEvidence = screenshotType === 'ROCKET_TRADE' ? [
+    pnlType ? `${pnlType} percentage label` : null,
+    avgEntry != null ? 'Entry Price' : null,
+    referenceClosePrice != null ? 'Close price (reference)' : null,
+    direction ? `${direction} direction` : null,
+    leverage != null ? `${leverage}x leverage` : null,
+    normalizedSymbol ? `${normalizedSymbol} market` : null,
+  ].filter((item): item is string => item != null) : undefined
   return {
-    screenshotType, classificationConfidence, symbol: normalizedSymbol, quoteCurrency, direction, pnlType,
+    screenshotType, classificationConfidence, classificationEvidence, symbol: normalizedSymbol, quoteCurrency, direction, pnlType,
     eventTime: parseOcrEventTime(text), closePrice, referenceClosePrice, transactionPrice, leverage, quantity, size, margin, avgEntry, ltp,
     liquidationPrice, takeProfit, stopLoss, pnlAmount, grossPnlAmount, feeAmount, pnlPercentage: pnlPercentage ?? undefined, transactionId, positionId, exchange,
     marketType: marketType?.toLowerCase() === 'spot' ? 'Spot' : marketType ? marketType[0].toUpperCase() + marketType.slice(1).toLowerCase() : undefined,

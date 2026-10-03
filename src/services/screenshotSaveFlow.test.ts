@@ -5,6 +5,7 @@ const state = vi.hoisted(() => ({
   inserted: [] as Array<{ draft: Record<string, unknown>; key?: string }>,
   updates: [] as Array<{ id: string; patch: Record<string, unknown> }>,
   screenshotUpdates: [] as Array<{ id: string; patch: Record<string, unknown> }>,
+  failRocketExtractionWrite: false,
   events: [] as Array<Record<string, unknown>>,
 }))
 
@@ -26,7 +27,13 @@ vi.mock('./supabaseClient', () => ({
 }))
 
 vi.mock('./tradeRepository', () => ({
-  updateScreenshot: async (id: string, patch: Record<string, unknown>) => { state.screenshotUpdates.push({ id, patch }) },
+  updateScreenshot: async (id: string, patch: Record<string, unknown>) => {
+    state.screenshotUpdates.push({ id, patch })
+    if (patch.screenshot_type === 'ROCKET_TRADE' && state.failRocketExtractionWrite) {
+      state.failRocketExtractionWrite = false
+      throw new Error('Supabase screenshot update failed: enum value unavailable')
+    }
+  },
   insertTrade: async (draft: Record<string, unknown>, key?: string) => {
     state.inserted.push({ draft, key })
     const created = { id: key ?? 'created-trade', ...draft, createdAt: '', updatedAt: '' }
@@ -44,8 +51,8 @@ vi.mock('./tradeRepository', () => ({
   listTradeEvents: async () => [],
 }))
 
-import { applyExtraction } from './screenshotExtractionService'
-import type { ExtractedTradeData } from '../types'
+import { applyExtraction, processScreenshot } from './screenshotExtractionService'
+import type { ExtractedTradeData, Screenshot } from '../types'
 
 const rareTrade = {
   id: 'existing-rare', symbol: 'RARE/USDT', exchange: 'CoinDCX', marketType: 'Futures', direction: 'SHORT',
@@ -62,6 +69,7 @@ describe('partial screenshot confirmation', () => {
     state.inserted = []
     state.updates = []
     state.screenshotUpdates = []
+    state.failRocketExtractionWrite = false
     state.events = []
   })
 
@@ -207,5 +215,27 @@ describe('partial screenshot confirmation', () => {
     expect(state.inserted).toHaveLength(1)
     expect(state.inserted[0]?.key).toBe('second-open-shot')
     expect(state.updates).toHaveLength(0)
+  })
+
+  it('keeps raw OCR and parsed rocket fields when a later screenshot metadata write fails', async () => {
+    state.failRocketExtractionWrite = true
+    const screenshot: Screenshot = {
+      id: 'rocket-shot', tradeId: null, storagePath: 'user/rocket.png', screenshotType: 'UNKNOWN',
+      uploadedAt: '', extractedAt: null, extractionStatus: 'UPLOADED', extractionRawData: null,
+      extractionConfidence: null, sha256: 'hash', originalName: 'rocket.png', contentType: 'image/png', sizeBytes: 1,
+    }
+    const text = 'WLD • USDT\nLong\n10x\nLoss %\n-19.63%\nEntry Price\n0.558\nClose price\n0.547'
+    const result = await processScreenshot(screenshot, { name: 'rocket.png', type: 'image/png', size: 1 } as File, {
+      extractText: async () => ({ text, confidence: 0.91 }),
+    })
+
+    expect(result).toMatchObject({
+      screenshotType: 'ROCKET_TRADE', symbol: 'WLD/USDT', direction: 'LONG', leverage: 10,
+      pnlType: 'LOSS', pnlPercentage: -19.63, avgEntry: 0.558, referenceClosePrice: 0.547,
+      rawText: text, processingError: 'Supabase screenshot update failed: enum value unavailable',
+    })
+    const diagnosticWrite = state.screenshotUpdates[state.screenshotUpdates.length - 1]?.patch
+    expect(diagnosticWrite).toMatchObject({ extraction_status: 'EXTRACTED' })
+    expect(diagnosticWrite?.extraction_raw_data).toMatchObject({ rawText: text, screenshotType: 'ROCKET_TRADE', processingError: expect.any(String) })
   })
 })

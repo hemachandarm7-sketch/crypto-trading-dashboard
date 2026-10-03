@@ -49,6 +49,7 @@ export interface Trade {
 export interface ExtractedTradeData {
   screenshotType: ScreenshotType
   classificationConfidence?: ScreenshotClassificationConfidence
+  classificationEvidence?: string[]
   symbol?: string | null
   quoteCurrency?: string | null
   direction?: Direction | null
@@ -80,6 +81,8 @@ export interface ExtractedTradeData {
   marginMode?: 'ISOLATED' | 'CROSS'
   rawText?: string
   confidence?: number | null
+  /** Set when OCR succeeded but writing its diagnostics to Supabase failed. */
+  processingError?: string
   fieldProvenance?: Record<string, ExtractionFieldProvenance>
   fieldCurrencies?: Partial<Record<import('../utils/currency').MonetaryField, import('../utils/currency').CurrencyCode>>
   currencyAudit?: import('../utils/currency').CurrencyAudit

@@ -210,6 +210,7 @@ describe('exchange screenshot OCR normalization', () => {
     ['Profit% +8.42%', 'PROFIT', 8.42],
     ['Loss % -19.63%', 'LOSS', -19.63],
     ['Loss% 19.63%', 'LOSS', -19.63],
+    ['Los5 % -19.63%', 'LOSS', -19.63],
     ['Prof it % 8.42%', 'PROFIT', 8.42],
     ['Proflt % 8.42%', 'PROFIT', 8.42],
     ['P r o f i t % 8.42%', 'PROFIT', 8.42],
@@ -219,6 +220,7 @@ describe('exchange screenshot OCR normalization', () => {
     expect(result).toMatchObject({
       screenshotType: 'ROCKET_TRADE', symbol: 'WLD/USDT', quoteCurrency: 'USDT', direction: 'LONG', leverage: 10,
       pnlType, pnlPercentage, avgEntry: 0.558, referenceClosePrice: 0.547, classificationConfidence: 'VERY_HIGH',
+      classificationEvidence: expect.arrayContaining([`${pnlType} percentage label`, 'Entry Price', 'Close price (reference)', 'LONG direction', '10x leverage', 'WLD/USDT market']),
     })
     expect(result.closePrice).toBeUndefined()
     expect(result.fieldCurrencies?.referenceClosePrice).toBe('USDT')

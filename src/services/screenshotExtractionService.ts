@@ -145,10 +145,15 @@ export async function processScreenshot(
   onStatusChange?: () => void | Promise<void>,
 ): Promise<ExtractedTradeData> {
   trace('[UPLOAD] file name/type/size', file.name, file.type, file.size)
+  let extractedData: ExtractedTradeData | null = null
+  let failedStage = 'mark-processing'
   try {
     await updateScreenshot(screenshot.id, { extraction_status: 'PROCESSING', extraction_raw_data: null })
     await onStatusChange?.()
+    failedStage = 'ocr-and-parse'
     const data = await extractScreenshot(file, provider)
+    extractedData = data
+    failedStage = 'save-extraction'
     await updateScreenshot(screenshot.id, {
       screenshot_type: data.screenshotType,
       extracted_at: new Date().toISOString(),
@@ -158,15 +163,31 @@ export async function processScreenshot(
     })
     trace('[MATCH] waiting for user confirmation; extraction has not been written to trades yet')
     await onStatusChange?.()
+    trace('[FORM] populated data', { screenshotType: data.screenshotType, symbol: data.symbol, direction: data.direction, leverage: data.leverage })
     return data
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Screenshot processing failed.'
-    await updateScreenshot(screenshot.id, {
-      extraction_status: 'FAILED', extracted_at: new Date().toISOString(),
-      extraction_raw_data: { error: message, providerConfigured: provider != null },
-    })
-    await onStatusChange?.()
-    throw new Error(message)
+    const diagnostics = extractedData
+      ? { ...toJsonObject(extractedData), processingError: message, failedStage, ocrStatus: 'COMPLETED' }
+      : { error: message, providerConfigured: provider != null, failedStage, ocrStatus: 'FAILED' }
+    try {
+      await updateScreenshot(screenshot.id, {
+        ...(extractedData ? { screenshot_type: extractedData.screenshotType, extraction_confidence: extractedData.confidence ?? null } : {}),
+        extraction_status: extractedData ? 'EXTRACTED' : 'FAILED', extracted_at: new Date().toISOString(),
+        extraction_raw_data: diagnostics as unknown as Json,
+      })
+    } catch (diagnosticError) {
+      trace('[OCR] could not persist failure diagnostics', diagnosticError)
+    }
+    try { await onStatusChange?.() } catch (refreshError) { trace('[OCR] status refresh failed', refreshError) }
+    if (extractedData) {
+      trace('[OCR] extraction succeeded but a later processing step failed', { failedStage, error: message, rawTextLength: extractedData.rawText?.length ?? 0 })
+      // Keep a usable review result in memory even when a transient database
+      // write fails; do not turn successful OCR into an empty/UNKNOWN result.
+      return { ...extractedData, processingError: message }
+    }
+    trace('[OCR] failed before normalized data was available', { failedStage, error: message })
+    throw new Error(`${failedStage}: ${message}`)
   }
 }
 
