@@ -2,9 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -12,25 +10,44 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout
       uses: actions/checkout@v4
     
-    - name: Setup Node.js
+    - name: Setup Node
       uses: actions/setup-node@v4
       with:
         node-version: '20'
     
+    - name: Check files
+      run: |
+        echo "=== Current directory ==="
+        pwd
+        echo "=== Files ==="
+        ls -la
+        echo "=== package.json exists? ==="
+        test -f package.json && echo "YES" || echo "NO"
+        echo "=== .env.example exists? ==="
+        test -f .env.example && echo "YES" || echo "NO"
+    
     - name: Install dependencies
-      run: npm ci
+      run: |
+        echo "=== Installing dependencies ==="
+        npm ci
+        echo "=== Installed successfully ==="
     
-    - name: Create .env file
-      run: cp .env.example .env
+    - name: Create env
+      run: |
+        echo "=== Creating .env ==="
+        cp .env.example .env
+        echo "=== .env created ==="
     
-    - name: Build web app
-      run: npm run build
-    
-    - name: Verify dist folder
-      run: ls -la dist/
+    - name: Build
+      run: |
+        echo "=== Building web app ==="
+        npm run build
+        echo "=== Build complete ==="
+        echo "=== Checking dist ==="
+        ls -la dist/
     
     - name: Setup Java
       uses: actions/setup-java@v4
@@ -41,22 +58,27 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
     
-    - name: Remove existing android folder
-      run: rm -rf android
-    
-    - name: Add Android platform
-      run: npx cap add android
-    
-    - name: Sync Android
-      run: npx cap sync android
-    
-    - name: Build Android APK (Debug)
+    - name: Initialize Capacitor
       run: |
+        echo "=== Checking Capacitor ==="
+        npx cap --version
+        echo "=== Removing old android ==="
+        rm -rf android
+        echo "=== Adding Android ==="
+        npx cap add android
+        echo "=== Android added ==="
+    
+    - name: Build APK
+      run: |
+        echo "=== Starting Gradle build ==="
         cd android
         chmod +x gradlew
         ./gradlew assembleDebug --no-daemon --stacktrace
+        echo "=== Build complete ==="
+        echo "=== Checking APK ==="
+        ls -la app/build/outputs/apk/debug/
     
-    - name: Upload APK artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: orbit-android-debug
