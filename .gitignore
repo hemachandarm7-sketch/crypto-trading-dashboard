@@ -8,3 +8,14 @@ dist/
 Thumbs.db
 *.tsbuildinfo
 coverage/
+
+# Android
+android/
+*.apk
+*.aab
+
+# Environment
+.env
+.env.local
+.env.production
+
