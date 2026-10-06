@@ -18,36 +18,14 @@ jobs:
       with:
         node-version: '20'
     
-    - name: Check files
-      run: |
-        echo "=== Current directory ==="
-        pwd
-        echo "=== Files ==="
-        ls -la
-        echo "=== package.json exists? ==="
-        test -f package.json && echo "YES" || echo "NO"
-        echo "=== .env.example exists? ==="
-        test -f .env.example && echo "YES" || echo "NO"
-    
     - name: Install dependencies
-      run: |
-        echo "=== Installing dependencies ==="
-        npm ci
-        echo "=== Installed successfully ==="
+      run: npm ci
     
     - name: Create env
-      run: |
-        echo "=== Creating .env ==="
-        cp .env.example .env
-        echo "=== .env created ==="
+      run: cp .env.example .env
     
-    - name: Build
-      run: |
-        echo "=== Building web app ==="
-        npm run build
-        echo "=== Build complete ==="
-        echo "=== Checking dist ==="
-        ls -la dist/
+    - name: Build web app
+      run: npm run build
     
     - name: Setup Java
       uses: actions/setup-java@v4
@@ -57,26 +35,19 @@ jobs:
     
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
+      with:
+        accept-android-sdk-licenses: true
     
     - name: Initialize Capacitor
       run: |
-        echo "=== Checking Capacitor ==="
-        npx cap --version
-        echo "=== Removing old android ==="
         rm -rf android
-        echo "=== Adding Android ==="
         npx cap add android
-        echo "=== Android added ==="
     
     - name: Build APK
       run: |
-        echo "=== Starting Gradle build ==="
         cd android
         chmod +x gradlew
         ./gradlew assembleDebug --no-daemon --stacktrace
-        echo "=== Build complete ==="
-        echo "=== Checking APK ==="
-        ls -la app/build/outputs/apk/debug/
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
