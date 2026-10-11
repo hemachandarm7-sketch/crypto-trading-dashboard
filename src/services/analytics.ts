@@ -34,6 +34,7 @@ export function getAnalytics(trades: Trade[]): AnalyticsSummary {
     tpHits: closed.filter(trade => trade.closeReason === 'TP_HIT').length,
     slHits: closed.filter(trade => trade.closeReason === 'SL_HIT').length,
     manualClosures: closed.filter(trade => trade.closeReason === 'MANUAL_CLOSE').length,
+    liquidations: closed.filter(trade => trade.closeReason === 'LIQUIDATED').length,
     averageHoldingTimeSeconds: holdingTimes.length ? holdingTimes.reduce((sum, value) => sum + value, 0) / holdingTimes.length : null,
   }
 }
@@ -84,7 +85,7 @@ export function buildCoinPerformance(trades: Trade[]) {
 }
 
 export function buildCloseReasonPerformance(trades: Trade[]) {
-  return (['TP_HIT', 'SL_HIT', 'MANUAL_CLOSE'] as const).map(reason => ({
+  return (['TP_HIT', 'SL_HIT', 'MANUAL_CLOSE', 'LIQUIDATED'] as const).map(reason => ({
     reason, count: trades.filter(trade => trade.status === 'CLOSED' && trade.closeReason === reason).length,
   }))
 }
