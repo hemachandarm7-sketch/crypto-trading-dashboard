@@ -1,6 +1,6 @@
 export type Direction = 'LONG' | 'SHORT'
-export type TradeStatus = 'OPEN' | 'CLOSED'
-export type CloseReason = 'TP_HIT' | 'SL_HIT' | 'MANUAL_CLOSE' | 'LIQUIDATED' | 'UNKNOWN'
+export type TradeStatus = 'OPEN' | 'CLOSED' | 'LIQUIDATED'
+export type CloseReason = 'TP_HIT' | 'SL_HIT' | 'MANUAL_CLOSE' | 'UNKNOWN'
 export type ScreenshotType = 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'ROCKET_TRADE' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
 export type PnlType = 'PROFIT' | 'LOSS'
 export type ScreenshotClassificationConfidence = 'HIGH' | 'VERY_HIGH'
