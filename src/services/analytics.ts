@@ -5,7 +5,7 @@ export function getRealizedPnl(trades: Trade[]): number {
 }
 
 export function getAnalytics(trades: Trade[]): AnalyticsSummary {
-  const closed = trades.filter(trade => trade.status === 'CLOSED')
+  const closed = trades.filter(trade => trade.status === 'CLOSED' || trade.status === 'LIQUIDATED')
   const known = closed.filter((trade): trade is Trade & { pnlAmount: number } => trade.pnlAmount != null)
   const profits = known.map(trade => trade.pnlAmount).filter(pnl => pnl > 0)
   const losses = known.map(trade => trade.pnlAmount).filter(pnl => pnl < 0)
@@ -31,10 +31,10 @@ export function getAnalytics(trades: Trade[]): AnalyticsSummary {
     maxDrawdown, totalInvestment: investment.reduce((sum, value) => sum + value, 0),
     totalTrades: trades.length, openTrades: trades.filter(trade => trade.status === 'OPEN').length,
     closedTrades: closed.length,
-    tpHits: closed.filter(trade => trade.closeReason === 'TP_HIT').length,
-    slHits: closed.filter(trade => trade.closeReason === 'SL_HIT').length,
-    manualClosures: closed.filter(trade => trade.closeReason === 'MANUAL_CLOSE').length,
-    liquidations: closed.filter(trade => trade.closeReason === 'LIQUIDATED').length,
+    tpHits: closed.filter(trade => trade.status === 'CLOSED' && trade.closeReason === 'TP_HIT').length,
+    slHits: closed.filter(trade => trade.status === 'CLOSED' && trade.closeReason === 'SL_HIT').length,
+    manualClosures: closed.filter(trade => trade.status === 'CLOSED' && trade.closeReason === 'MANUAL_CLOSE').length,
+    liquidations: trades.filter(trade => trade.status === 'LIQUIDATED').length,
     averageHoldingTimeSeconds: holdingTimes.length ? holdingTimes.reduce((sum, value) => sum + value, 0) / holdingTimes.length : null,
   }
 }
@@ -85,7 +85,7 @@ export function buildCoinPerformance(trades: Trade[]) {
 }
 
 export function buildCloseReasonPerformance(trades: Trade[]) {
-  return (['TP_HIT', 'SL_HIT', 'MANUAL_CLOSE', 'LIQUIDATED'] as const).map(reason => ({
+  return (['TP_HIT', 'SL_HIT', 'MANUAL_CLOSE'] as const).map(reason => ({
     reason, count: trades.filter(trade => trade.status === 'CLOSED' && trade.closeReason === reason).length,
   }))
 }
