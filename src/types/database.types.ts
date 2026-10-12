@@ -7,7 +7,7 @@ type TradeRow = {
   margin: number | null; avg_entry: number | null; ltp: number | null; liquidation_price: number | null
   take_profit: number | null; stop_loss: number | null; open_time: string | null; close_time: string | null
   holding_duration_seconds: number | null; holding_duration_display: string | null; close_price: number | null
-  pnl_amount: number | null; pnl_percentage: number | null; status: 'OPEN' | 'CLOSED'
+  pnl_amount: number | null; pnl_percentage: number | null; status: 'OPEN' | 'CLOSED' | 'LIQUIDATED'
   close_reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL_CLOSE' | 'UNKNOWN' | null; setup: string | null
   notes: string | null; exchange_position_id: string | null; open_transaction_id: string | null; close_transaction_id: string | null; created_at: string; updated_at: string
 }
@@ -37,7 +37,7 @@ export interface Database {
     Functions: Record<string, never>
     Enums: {
       trade_direction: 'LONG' | 'SHORT'
-      trade_status: 'OPEN' | 'CLOSED'
+      trade_status: 'OPEN' | 'CLOSED' | 'LIQUIDATED'
       trade_close_reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL_CLOSE' | 'UNKNOWN'
       screenshot_type: 'OPEN_TRANSACTION' | 'CLOSE_TRANSACTION' | 'ROCKET_TRADE' | 'PNL' | 'POSITION_DETAILS' | 'UNKNOWN'
       screenshot_extraction_status: 'UPLOADED' | 'PROCESSING' | 'EXTRACTED' | 'MATCHED' | 'COMPLETED' | 'FAILED'
