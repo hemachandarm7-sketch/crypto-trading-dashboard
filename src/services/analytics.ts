@@ -6,11 +6,16 @@ export function getRealizedPnl(trades: Trade[]): number {
 
 export function getAnalytics(trades: Trade[]): AnalyticsSummary {
   const closed = trades.filter(trade => trade.status === 'CLOSED' || trade.status === 'LIQUIDATED')
+  const liquidated = trades.filter(trade => trade.status === 'LIQUIDATED')
   const known = closed.filter((trade): trade is Trade & { pnlAmount: number } => trade.pnlAmount != null)
   const profits = known.map(trade => trade.pnlAmount).filter(pnl => pnl > 0)
   const losses = known.map(trade => trade.pnlAmount).filter(pnl => pnl < 0)
   const totalProfit = profits.reduce((sum, pnl) => sum + pnl, 0)
   const totalLoss = Math.abs(losses.reduce((sum, pnl) => sum + pnl, 0))
+  
+  // ✅ Calculate liquidation loss separately
+  const liquidationLoss = liquidated.reduce((sum, trade) => sum + Math.abs(trade.pnlAmount ?? 0), 0)
+  
   const percentages = closed.map(trade => trade.pnlPercentage).filter((value): value is number => value != null)
   const holdingTimes = closed.map(trade => trade.holdingDurationSeconds).filter((value): value is number => value != null)
   let equity = 0, peak = 0, maxDrawdown = 0
@@ -34,13 +39,15 @@ export function getAnalytics(trades: Trade[]): AnalyticsSummary {
     tpHits: closed.filter(trade => trade.status === 'CLOSED' && trade.closeReason === 'TP_HIT').length,
     slHits: closed.filter(trade => trade.status === 'CLOSED' && trade.closeReason === 'SL_HIT').length,
     manualClosures: closed.filter(trade => trade.status === 'CLOSED' && trade.closeReason === 'MANUAL_CLOSE').length,
-    liquidations: trades.filter(trade => trade.status === 'LIQUIDATED').length,
+    liquidations: liquidated.length,
+    liquidationLoss,  // ✅ NEW: Track liquidation loss separately
     averageHoldingTimeSeconds: holdingTimes.length ? holdingTimes.reduce((sum, value) => sum + value, 0) / holdingTimes.length : null,
   }
 }
 
 function closedTradesWithKnownPnl(trades: Trade[]) {
-  return trades.filter((trade): trade is Trade & { pnlAmount: number } => trade.status === 'CLOSED' && trade.pnlAmount != null)
+  // ✅ Include both CLOSED and LIQUIDATED trades
+  return trades.filter((trade): trade is Trade & { pnlAmount: number } => (trade.status === 'CLOSED' || trade.status === 'LIQUIDATED') && trade.pnlAmount != null)
 }
 
 export function buildEquityCurve(trades: Trade[]) {

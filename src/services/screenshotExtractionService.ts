@@ -24,6 +24,26 @@ export interface OCRResult { text: string; confidence?: number; recoveredMargin?
 export interface OCRProvider { extractText(file: File): Promise<OCRResult> }
 export type OCRProviderFactory = () => OCRProvider | null
 
+/** Detect if extracted data represents a liquidation transaction */
+function isLiquidationTransaction(rawText: string | undefined): boolean {
+  if (!rawText) return false
+  
+  const lowerText = rawText.toLowerCase()
+  
+  // Keywords that indicate liquidation
+  const liquidationKeywords = [
+    'liquidation',
+    'liquidated',
+    'margin call',
+    'forced close',
+    'auto close',
+    'position closed due to'
+  ]
+  
+  // Check if any liquidation keyword is present
+  return liquidationKeywords.some(keyword => lowerText.includes(keyword))
+}
+
 interface OCRBox { x0: number; y0: number; x1: number; y1: number }
 interface OCRWord { text: string; bbox: OCRBox }
 interface OCRLine { text: string; bbox: OCRBox; words: OCRWord[] }
@@ -132,6 +152,25 @@ export async function extractScreenshot(file: File, provider: OCRProvider | null
     normalized.margin = result.recoveredMargin
     normalized.fieldProvenance = { ...(normalized.fieldProvenance ?? {}), margin: { source: 'direct_ocr' } }
   }
+  
+  // ✅ DETECT LIQUIDATION TRANSACTIONS
+  if (isLiquidationTransaction(result.text)) {
+    normalized.pnlType = 'LOSS'  // Force as loss
+    normalized.classificationConfidence = 'VERY_HIGH'
+    normalized.classificationEvidence = [
+      'Liquidation keyword detected in text',
+      'Marked as forced position closure',
+      ...(normalized.classificationEvidence ?? [])
+    ]
+    
+    trace('[LIQUIDATION DETECTED]', {
+      symbol: normalized.symbol,
+      price: normalized.transactionPrice,
+      loss: normalized.pnlAmount,
+      lossPercent: normalized.pnlPercentage
+    })
+  }
+  
   const reconstructed = reconstructTradeEvidence(normalized)
   trace('[EXTRACT] screenshot type', normalized.screenshotType)
   trace('[EXTRACT] normalized result', reconstructed)
