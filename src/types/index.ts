@@ -137,6 +137,7 @@ export interface AnalyticsSummary {
   slHits: number
   manualClosures: number
   liquidations: number
+  liquidationLoss: number  // ✅ NEW: Track liquidation loss separately
   averageHoldingTimeSeconds: number | null
 }
 
