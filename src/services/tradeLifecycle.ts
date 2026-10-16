@@ -65,10 +65,17 @@ export function resolvePnlPercentage(
   pnlAmount: number | null,
   margin: number | null,
 ): number | null {
+  // ALWAYS prefer calculating from pnlAmount and margin when both available
+  // This ensures accuracy and fixes cases where OCR-extracted percentage is wrong
+  if (pnlAmount != null && margin != null && margin > 0) {
+    return pnlAmount / margin * 100
+  }
+  
+  // Fall back to extracted percentages if no pnlAmount/margin
   if (dedicatedPnl != null) return dedicatedPnl
   if (closeTransactionPnl != null) return closeTransactionPnl
   if (existing != null) return existing
-  if (pnlAmount != null && margin != null && margin > 0) return pnlAmount / margin * 100
+  
   return null
 }
 
