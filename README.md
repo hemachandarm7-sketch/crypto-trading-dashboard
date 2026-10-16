@@ -103,3 +103,4 @@ The UI uses a Supabase repository for trades, settings, screenshot metadata, and
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
