@@ -37,7 +37,7 @@ export function mapScreenshot(row: ScreenshotRow, previewUrl?: string): Screensh
     ? row.extraction_raw_data as Record<string, unknown>
     : null
   const extractedType = extractionRawData?.screenshotType
-  const screenshotTypes = ['OPEN_TRANSACTION', 'CLOSE_TRANSACTION', 'ROCKET_TRADE', 'PNL', 'POSITION_DETAILS', 'UNKNOWN']
+  const screenshotTypes = ['OPEN_TRANSACTION', 'CLOSE_TRANSACTION', 'ROCKET_TRADE', 'PNL', 'POSITION_DETAILS', 'LIQUIDATION', 'UNKNOWN']
   return {
     id: row.id, tradeId: row.trade_id, storagePath: row.storage_path,
     // Older production databases may not yet have the additive ROCKET_TRADE
