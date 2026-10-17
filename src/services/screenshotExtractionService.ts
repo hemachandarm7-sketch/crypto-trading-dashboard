@@ -232,6 +232,13 @@ export async function processScreenshot(
 
 export async function confirmManualExtraction(screenshot: Screenshot, data: ExtractedTradeData, selectedTradeId?: string, forceCreateNew = false): Promise<string | null> {
   trace('[FORM CONFIRMED]', { screenshotId: screenshot.id, screenshotType: data.screenshotType, symbol: data.symbol, direction: data.direction, leverage: data.leverage })
+  
+  // Auto-set status to LIQUIDATED when LIQUIDATION screenshot type is submitted
+  if (data.screenshotType === 'LIQUIDATION') {
+    data = { ...data, tradeStatus: 'LIQUIDATED' }
+    trace('[LIQUIDATION] Auto-setting status to LIQUIDATED for liquidation screenshot')
+  }
+  
   data = reconstructTradeEvidence(data)
   data = await normalizeScreenshotCurrencies(data)
   await updateScreenshot(screenshot.id, {
@@ -290,20 +297,22 @@ function toDraft(data: ExtractedTradeData, useEventAsOpenTime = data.screenshotT
   const initialPrice = data.avgEntry ?? data.transactionPrice
   if (!data.symbol) throw new Error('Cannot create a trade until the screenshot identifies a symbol.')
   const isClose = data.screenshotType === 'CLOSE_TRANSACTION'
+  const isLiquidation = data.screenshotType === 'LIQUIDATION'
+  const status: 'OPEN' | 'CLOSED' | 'LIQUIDATED' = isLiquidation ? 'LIQUIDATED' : isClose ? 'CLOSED' : 'OPEN'
   return {
     symbol: data.symbol, exchange: data.exchange ?? null, marketType: data.marketType ?? null,
     direction: data.direction ?? null, leverage: data.leverage ?? null, quantity: data.quantity ?? null, size: data.size ?? null,
     margin: data.margin ?? null, avgEntry: initialPrice ?? null, ltp: data.ltp ?? null,
     liquidationPrice: data.liquidationPrice ?? null, takeProfit: data.takeProfit ?? null, stopLoss: data.stopLoss ?? null,
     // A P&L or position screenshot timestamp is not the moment the position opened.
-    openTime: useEventAsOpenTime ? data.eventTime ?? null : null, closeTime: null, holdingDurationSeconds: null, holdingDurationDisplay: null,
-    closePrice: isClose ? data.closePrice ?? data.transactionPrice ?? null : null,
+    openTime: useEventAsOpenTime ? data.eventTime ?? null : null, closeTime: isClose || isLiquidation ? data.eventTime ?? null : null, holdingDurationSeconds: null, holdingDurationDisplay: null,
+    closePrice: isClose || isLiquidation ? data.closePrice ?? data.liquidationPrice ?? data.transactionPrice ?? null : null,
     pnlAmount: data.pnlAmount ?? null, pnlPercentage: data.pnlPercentage ?? null,
-    status: isClose ? 'CLOSED' as const : 'OPEN' as const, closeReason: null,
-    ...(isClose ? { closeTime: data.eventTime ?? null } : {}),
+    status, closeReason: isLiquidation ? null : null,
+    ...(isLiquidation ? { closeTime: data.eventTime ?? null } : {}),
     setup: null, notes: null, exchangePositionId: data.positionId ?? null,
     openTransactionId: data.screenshotType === 'OPEN_TRANSACTION' ? data.transactionId ?? null : null,
-    closeTransactionId: isClose ? data.transactionId ?? null : null,
+    closeTransactionId: (isClose || isLiquidation) ? data.transactionId ?? null : null,
   }
 }
 
@@ -446,7 +455,16 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   if (!matched) {
     // A valid typed screenshot is sufficient to create a partial trade. Missing
     // direction/position values remain NULL until later evidence is reviewed.
-    matched = await insertTrade(toDraft(reconstructTradeEvidence(data), data.screenshotType === 'OPEN_TRANSACTION'), screenshotId)
+    const draft = toDraft(reconstructTradeEvidence(data), data.screenshotType === 'OPEN_TRANSACTION')
+    // Set status to LIQUIDATED for liquidation screenshots
+    if (data.screenshotType === 'LIQUIDATION') {
+      draft.status = 'LIQUIDATED'
+      draft.closeTime = data.eventTime ?? new Date().toISOString()
+      draft.closePrice = data.liquidationPrice ?? null
+      draft.pnlAmount = data.pnlAmount ?? null
+      draft.pnlPercentage = data.pnlPercentage ?? null
+    }
+    matched = await insertTrade(draft, screenshotId)
   } else if (data.screenshotType === 'OPEN_TRANSACTION') {
     // An Open transaction may arrive before side/position details. Keep its facts and fill missing identity only.
     const resolvedOpenTime = matched.openTime ?? data.eventTime ?? null
@@ -468,7 +486,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
       } : {}),
     }
     if (Object.keys(patch).length) matched = await updateTradeFromExtraction(matched.id, patch)
-  } else if (matched && (data.screenshotType === 'POSITION_DETAILS' || data.screenshotType === 'PNL' || data.screenshotType === 'ROCKET_TRADE' || data.screenshotType === 'CLOSE_TRANSACTION')) {
+  } else if (matched && (data.screenshotType === 'POSITION_DETAILS' || data.screenshotType === 'PNL' || data.screenshotType === 'ROCKET_TRADE' || data.screenshotType === 'CLOSE_TRANSACTION' || data.screenshotType === 'LIQUIDATION')) {
     // Events are the durable evidence ledger. Combine the screenshots attached
     // to this exact trade ID before updating current trade fields.
     const priorEvents = await listTradeEvents(matched.id)
@@ -485,6 +503,21 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
         ...nonNullPatch(evidence),
         ...(evidence.pnlAmount != null ? { pnlAmount: evidence.pnlAmount } : {}),
         pnlPercentage,
+      })
+    } else if (data.screenshotType === 'LIQUIDATION') {
+      // Handle liquidation: mark trade as LIQUIDATED with liquidation details
+      const closePrice = data.liquidationPrice ?? evidence.liquidationPrice ?? null
+      const closeTime = data.eventTime ?? null
+      const pnlAmount = evidence.pnlAmount ?? matched.pnlAmount
+      const pnlPercentage = resolvePnlPercentage(evidence.pnlPercentage ?? null, null, matched.pnlPercentage, pnlAmount, evidence.margin ?? matched.margin)
+      const holdingSeconds = matched.openTime && closeTime ? Math.max(0, Math.floor((Date.parse(closeTime) - Date.parse(matched.openTime)) / 1000)) : null
+      matched = await updateTradeFromExtraction(matched.id, {
+        ...nonNullPatch(evidence), status: 'LIQUIDATED', closeTime, closePrice,
+        closeReason: null,  // Liquidation has no reason field
+        closeTransactionId: data.transactionId ?? matched.closeTransactionId,
+        ...(pnlAmount != null ? { pnlAmount } : {}), pnlPercentage,
+        holdingDurationSeconds: Number.isFinite(holdingSeconds) ? holdingSeconds : null,
+        holdingDurationDisplay: formatDuration(holdingSeconds),
       })
     } else {
       const closePrice = data.closePrice ?? data.transactionPrice ?? evidence.closePrice ?? null

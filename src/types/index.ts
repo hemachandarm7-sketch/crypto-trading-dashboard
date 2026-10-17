@@ -54,6 +54,8 @@ export interface ExtractedTradeData {
   quoteCurrency?: string | null
   direction?: Direction | null
   pnlType?: PnlType | null
+  /** Auto-set to LIQUIDATED when screenshot type is LIQUIDATION */
+  tradeStatus?: 'OPEN' | 'CLOSED' | 'LIQUIDATED'
   eventTime?: string | null
   transactionPrice?: number | null
   closePrice?: number | null
