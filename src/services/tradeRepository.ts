@@ -108,7 +108,17 @@ export async function removeTrade(id: string): Promise<void> {
 }
 
 export function mapFormToTradeInsert(trade: TradeDraft, userId: string, idempotencyKey?: string): TradeInsertRow {
-  trace('[TRADE INSERT] status value:', { status: trade.status, type: typeof trade.status, isString: typeof trade.status === 'string', isLiquidated: trade.status === 'LIQUIDATED' })
+  // Ensure status is always explicitly set and never undefined
+  const status = trade.status ?? 'OPEN'
+  trace('[TRADE INSERT] status value:', { 
+    provided: trade.status, 
+    final: status, 
+    type: typeof status, 
+    isString: typeof status === 'string', 
+    isLiquidated: status === 'LIQUIDATED',
+    isOpen: status === 'OPEN',
+    isClosed: status === 'CLOSED'
+  })
   return {
     ...(idempotencyKey ? { id: idempotencyKey } : {}),
     user_id: userId,
@@ -134,7 +144,7 @@ export function mapFormToTradeInsert(trade: TradeDraft, userId: string, idempote
     close_price: trade.closePrice,
     pnl_amount: trade.pnlAmount,
     pnl_percentage: trade.pnlPercentage,
-    status: trade.status,
+    status, // Use the explicitly set status variable
     close_reason: trade.closeReason,
     setup: trade.setup,
     notes: trade.notes,

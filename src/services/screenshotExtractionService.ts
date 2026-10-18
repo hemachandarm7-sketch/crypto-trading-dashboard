@@ -299,6 +299,14 @@ function toDraft(data: ExtractedTradeData, useEventAsOpenTime = data.screenshotT
   const isClose = data.screenshotType === 'CLOSE_TRANSACTION'
   const isLiquidation = data.screenshotType === 'LIQUIDATION'
   const status: 'OPEN' | 'CLOSED' | 'LIQUIDATED' = isLiquidation ? 'LIQUIDATED' : isClose ? 'CLOSED' : 'OPEN'
+  
+  trace('[TO_DRAFT] Creating trade draft:', {
+    screenshotType: data.screenshotType,
+    isLiquidation,
+    statusSet: status,
+    symbol: data.symbol,
+  })
+  
   return {
     symbol: data.symbol, exchange: data.exchange ?? null, marketType: data.marketType ?? null,
     direction: data.direction ?? null, leverage: data.leverage ?? null, quantity: data.quantity ?? null, size: data.size ?? null,
@@ -456,15 +464,26 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
     // A valid typed screenshot is sufficient to create a partial trade. Missing
     // direction/position values remain NULL until later evidence is reviewed.
     const draft = toDraft(reconstructTradeEvidence(data), data.screenshotType === 'OPEN_TRANSACTION')
-    // Set status to LIQUIDATED for liquidation screenshots
+    
+    // LIQUIDATION screenshot type should already set status to LIQUIDATED in toDraft,
+    // but we ensure it here as a safety check and set additional fields
     if (data.screenshotType === 'LIQUIDATION') {
-      draft.status = 'LIQUIDATED'
+      trace('[LIQUIDATION] Before override:', { status: draft.status })
+      draft.status = 'LIQUIDATED' // Force to LIQUIDATED (should already be from toDraft)
       draft.closeTime = data.eventTime ?? new Date().toISOString()
       draft.closePrice = data.liquidationPrice ?? null
       draft.pnlAmount = data.pnlAmount ?? null
       draft.pnlPercentage = data.pnlPercentage ?? null
-      trace('[LIQUIDATION] Draft before insert:', { status: draft.status, type: typeof draft.status, isLiquidated: draft.status === 'LIQUIDATED' })
+      trace('[LIQUIDATION] After override:', { 
+        status: draft.status, 
+        type: typeof draft.status, 
+        isLiquidated: draft.status === 'LIQUIDATED',
+        closeTime: draft.closeTime,
+        closePrice: draft.closePrice
+      })
     }
+    
+    trace('[APPLY_EXTRACTION] About to insert trade with status:', { status: draft.status, screenshotType: data.screenshotType })
     matched = await insertTrade(draft, screenshotId)
   } else if (data.screenshotType === 'OPEN_TRANSACTION') {
     // An Open transaction may arrive before side/position details. Keep its facts and fill missing identity only.
