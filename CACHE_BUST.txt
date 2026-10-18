@@ -1,0 +1,2 @@
+Cache bust timestamp: 2026-10-18T$(date +%s)
+Forcing Vercel full redeploy to clear connection caches
