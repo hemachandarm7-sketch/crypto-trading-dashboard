@@ -197,6 +197,10 @@ function isoEventTime(text: string): string | undefined {
 }
 
 function classify(text: string): ScreenshotType {
+  // Check for explicit liquidation first (highest priority)
+  const explicitLiquidation = text.match(/Transaction\s+type\s*[:#]?\s*Liquidation\b/i)
+  if (explicitLiquidation) return 'LIQUIDATION'
+  
   const explicitTransaction = text.match(/Transaction\s+type\s*[:#]?\s*(Open|Close)\b/i)?.[1]
   if (explicitTransaction) return explicitTransaction.toLowerCase() === 'open' ? 'OPEN_TRANSACTION' : 'CLOSE_TRANSACTION'
   const transactionDetails = text.match(/Transaction\s+Details[\s\S]{0,300}/i)?.[0]
@@ -212,6 +216,8 @@ function classify(text: string): ScreenshotType {
   if (hasOpen) return 'OPEN_TRANSACTION'
   if (hasClose) return 'CLOSE_TRANSACTION'
   if (/(?:\bProfit\s*%|\bLoss\s*%|\bP\s*&\s*L\b|\bRealized\s+Pnl\b)/i.test(text)) return 'PNL'
+  // Fallback: Check for liquidation keywords (forced closure, liquidation event)
+  if (/\b(?:liquidat|forced\s+(?:closure|liquidation|position\s+closure))\b/i.test(text)) return 'LIQUIDATION'
   if (/\b(?:Leverage|Avg\.?\s*Entry|Li[qg]\.?\s*Price|Liquidation\s*Price|Margin)\b/i.test(text)) return 'POSITION_DETAILS'
   return 'UNKNOWN'
 }
