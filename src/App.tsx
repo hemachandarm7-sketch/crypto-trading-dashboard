@@ -156,18 +156,37 @@ export default function App() {
   })
   // Helper function to refresh with retry for newly created trades
   const refreshUntilTradeVisible = async (expectedTradeId: string, maxRetries = 4): Promise<boolean> => {
+    console.debug(`[TRADE VISIBILITY] Starting search for trade: ${expectedTradeId}`)
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const trades_list = await refresh()
-      if (trades_list?.some(trade => trade.id === expectedTradeId)) {
+      console.debug(`[TRADE VISIBILITY] Attempt ${attempt + 1}/${maxRetries}: Found ${trades_list?.length ?? 0} total trades`)
+      
+      if (!expectedTradeId) {
+        console.error('[TRADE VISIBILITY] ERROR: expectedTradeId is empty/undefined!')
+        return false
+      }
+      
+      const found = trades_list?.some(trade => trade.id === expectedTradeId)
+      if (found) {
+        const foundTrade = trades_list?.find(trade => trade.id === expectedTradeId)
+        console.debug(`[TRADE VISIBILITY] ✅ Trade found!`, { 
+          tradeId: foundTrade?.id, 
+          symbol: foundTrade?.symbol,
+          status: foundTrade?.status
+        })
         return true
       }
+      
+      console.debug(`[TRADE VISIBILITY] Trade ${expectedTradeId} not found. Available IDs:`, trades_list?.map(t => ({ id: t.id, symbol: t.symbol, status: t.status })) ?? [])
+      
       if (attempt < maxRetries - 1) {
         // Exponential backoff: 100ms, 200ms, 400ms, 800ms
         const delayMs = 100 * Math.pow(2, attempt)
-        console.debug(`[TRADE VISIBILITY] Trade ${expectedTradeId} not yet visible, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`)
+        console.debug(`[TRADE VISIBILITY] Retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`)
         await new Promise(resolve => setTimeout(resolve, delayMs))
       }
     }
+    console.error(`[TRADE VISIBILITY] ❌ Trade ${expectedTradeId} not found after ${maxRetries} attempts`)
     return false
   }
 

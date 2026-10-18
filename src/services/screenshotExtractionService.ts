@@ -494,6 +494,14 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
     
     trace('[APPLY_EXTRACTION] About to insert trade with status:', { status: draft.status, screenshotType: data.screenshotType })
     matched = await insertTrade(draft, screenshotId)
+    trace('[TRADE_CREATED]', { 
+      tradeId: matched?.id, 
+      status: matched?.status, 
+      symbol: matched?.symbol,
+      direction: matched?.direction,
+      createdAt: matched?.createdAt,
+      hasId: !!matched?.id
+    })
   } else if (data.screenshotType === 'OPEN_TRANSACTION') {
     // An Open transaction may arrive before side/position details. Keep its facts and fill missing identity only.
     const resolvedOpenTime = matched.openTime ?? data.eventTime ?? null
