@@ -240,6 +240,24 @@ export async function deleteScreenshot(screenshot: Screenshot): Promise<void> {
   if (error) throw error
 }
 
+export async function deleteAllScreenshots(screenshots: Screenshot[]): Promise<void> {
+  if (screenshots.length === 0) return
+  
+  const client = requireSupabase()
+  const userId = await ensureSupabaseUser()
+  
+  // Delete from storage
+  const storagePaths = screenshots.map(s => s.storagePath)
+  if (storagePaths.length > 0) {
+    const { error: storageError } = await client.storage.from('trade-screenshots').remove(storagePaths)
+    if (storageError) throw databaseError('Failed to delete screenshots from storage', storageError)
+  }
+  
+  // Delete from database
+  const { error } = await client.from('screenshots').delete().eq('user_id', userId)
+  if (error) throw databaseError('Failed to delete all screenshots from database', error)
+}
+
 export async function updateScreenshot(id: string, patch: Database['public']['Tables']['screenshots']['Update']): Promise<void> {
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
