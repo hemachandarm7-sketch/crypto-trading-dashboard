@@ -108,6 +108,7 @@ export async function removeTrade(id: string): Promise<void> {
 }
 
 export function mapFormToTradeInsert(trade: TradeDraft, userId: string, idempotencyKey?: string): TradeInsertRow {
+  trace('[TRADE INSERT] status value:', { status: trade.status, type: typeof trade.status, isString: typeof trade.status === 'string', isLiquidated: trade.status === 'LIQUIDATED' })
   return {
     ...(idempotencyKey ? { id: idempotencyKey } : {}),
     user_id: userId,

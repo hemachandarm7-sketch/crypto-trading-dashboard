@@ -463,6 +463,7 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
       draft.closePrice = data.liquidationPrice ?? null
       draft.pnlAmount = data.pnlAmount ?? null
       draft.pnlPercentage = data.pnlPercentage ?? null
+      trace('[LIQUIDATION] Draft before insert:', { status: draft.status, type: typeof draft.status, isLiquidated: draft.status === 'LIQUIDATED' })
     }
     matched = await insertTrade(draft, screenshotId)
   } else if (data.screenshotType === 'OPEN_TRANSACTION') {
