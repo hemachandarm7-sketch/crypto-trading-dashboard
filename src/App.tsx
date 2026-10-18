@@ -154,6 +154,23 @@ export default function App() {
     setReviewSaveError(null)
     setReviewScreenshot({ ...screenshot, screenshotType: data.screenshotType, extractionStatus: 'EXTRACTED', extractionRawData: { ...data } })
   })
+  // Helper function to refresh with retry for newly created trades
+  const refreshUntilTradeVisible = async (expectedTradeId: string, maxRetries = 4): Promise<boolean> => {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const trades_list = await refresh()
+      if (trades_list?.some(trade => trade.id === expectedTradeId)) {
+        return true
+      }
+      if (attempt < maxRetries - 1) {
+        // Exponential backoff: 100ms, 200ms, 400ms, 800ms
+        const delayMs = 100 * Math.pow(2, attempt)
+        console.debug(`[TRADE VISIBILITY] Trade ${expectedTradeId} not yet visible, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`)
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+      }
+    }
+    return false
+  }
+
   const manualExtraction = async (screenshot: Screenshot, data: ExtractedTradeData, tradeId?: string, forceCreateNew = false) => {
     setWorking(true); setError(null); setSuccess(null); setReviewSaveError(null)
     try {
@@ -167,13 +184,17 @@ export default function App() {
         setError(message)
         return
       }
-      const visibleTrades = await refresh()
-      if (!visibleTrades?.some(trade => trade.id === savedTradeId)) {
-        const message = 'Supabase did not return this trade in the refreshed workspace. Your review is still open; retrying is safe and will not create a duplicate.'
+      
+      // Wait for trade to become visible in database with retry logic
+      // This handles replication lag on Supabase read replicas
+      const isVisible = await refreshUntilTradeVisible(savedTradeId, 4)
+      if (!isVisible) {
+        const message = 'Trade was created but is not visible in the workspace yet. Your review is still open; retrying is safe and will not create a duplicate. Please try again in a moment.'
         setReviewSaveError(message)
         setError(message)
         return
       }
+      
       setReviewScreenshot(null)
       const wasExistingTrade = trades.some(trade => trade.id === savedTradeId)
       setSuccess(`${wasExistingTrade ? 'Trade updated' : 'Trade created'} successfully (${data.symbol ?? 'trade'}).`)

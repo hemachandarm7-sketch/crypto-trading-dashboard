@@ -109,15 +109,18 @@ export function findOpenTradeForClose(trades: Trade[], data: ExtractedTradeData)
     && (!data.direction || !trade.direction || trade.direction === data.direction)
     && normalizeSymbol(trade.symbol) === symbol
     && sameExchange(trade, data))
+  
   if (data.positionId) {
     const exact = candidates.filter(trade => trade.exchangePositionId === data.positionId)
     if (exact.length === 1) return exact[0]
     if (exact.length > 1) return null
   }
+  
   if (data.eventTime) {
     const closeMs = Date.parse(data.eventTime)
     if (Number.isFinite(closeMs)) candidates = candidates.filter(trade => !trade.openTime || Date.parse(trade.openTime) <= closeMs)
   }
+  
   const corroborated = candidates.filter(trade => {
     const quantityMatch = data.quantity != null && trade.quantity != null
       && Math.abs(data.quantity - trade.quantity) <= Math.max(1e-9, Math.abs(trade.quantity) * 0.02)
@@ -126,7 +129,17 @@ export function findOpenTradeForClose(trades: Trade[], data: ExtractedTradeData)
     const pnlMatch = data.pnlAmount != null && trade.pnlAmount != null && valuesMatch(data.pnlAmount, trade.pnlAmount)
     return quantityMatch || entryMatch || pnlMatch
   })
-  return corroborated.length === 1 ? corroborated[0] : null
+  
+  if (corroborated.length === 0) return null
+  if (corroborated.length === 1) return corroborated[0]
+  
+  // If multiple matches, prefer the most recently created trade (assume newest = current session's trade)
+  // This avoids matching to old/stale trades when there are multiple OPEN trades with same symbol/direction
+  const mostRecent = corroborated.reduce((newest, current) => 
+    new Date(current.createdAt).getTime() > new Date(newest.createdAt).getTime() ? current : newest
+  )
+  
+  return mostRecent
 }
 
 export function findTradeForPnl(trades: Trade[], data: ExtractedTradeData): Trade | null {
@@ -160,5 +173,15 @@ export function findTradeForPnl(trades: Trade[], data: ExtractedTradeData): Trad
       || (timeDistance(trade.closeTime, data.eventTime) ?? Infinity) <= 10 * 60_000))
     || ((data.avgEntry ?? data.transactionPrice) != null && trade.avgEntry != null && data.leverage != null && data.leverage === trade.leverage)
   const corroborated = candidates.filter(hasStrongEvidence)
-  return corroborated.length === 1 ? corroborated[0] : null
+  
+  if (corroborated.length === 0) return null
+  if (corroborated.length === 1) return corroborated[0]
+  
+  // If multiple matches, prefer the most recently created trade
+  // This avoids matching to old/stale trades when there are multiple candidates
+  const mostRecent = corroborated.reduce((newest, current) => 
+    new Date(current.createdAt).getTime() > new Date(newest.createdAt).getTime() ? current : newest
+  )
+  
+  return mostRecent
 }

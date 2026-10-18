@@ -428,7 +428,16 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   }
   if (!forceCreateNew && !matched && data.screenshotType === 'OPEN_TRANSACTION') matched = findDuplicateOpenTrade(trades, data)
   if (!forceCreateNew && !matched && data.screenshotType === 'OPEN_TRANSACTION') matched = findTradeForOpenTransaction(trades, data)
-  if (!forceCreateNew && !matched && data.screenshotType === 'CLOSE_TRANSACTION') matched = findOpenTradeForClose(trades, data)
+  if (!forceCreateNew && !matched && data.screenshotType === 'CLOSE_TRANSACTION') {
+    matched = findOpenTradeForClose(trades, data)
+    trace('[TRADE MATCHING] CLOSE_TRANSACTION match:', { 
+      found: !!matched, 
+      matchedId: matched?.id, 
+      symbol: data.symbol,
+      direction: data.direction,
+      potentialCount: trades.filter(t => t.status === 'OPEN' && normalizeSymbol(t.symbol) === normalizeSymbol(data.symbol ?? '')).length
+    })
+  }
   if (!forceCreateNew && !matched && data.screenshotType === 'POSITION_DETAILS') matched = findOpenTradeForPositionDetails(trades, data)
   if (!forceCreateNew && !matched && data.screenshotType === 'PNL') matched = findTradeForPnl(trades, data)
   if (!forceCreateNew && !matched && data.screenshotType === 'ROCKET_TRADE') matched = findTradeForPnl(trades, data)
