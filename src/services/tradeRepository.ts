@@ -264,10 +264,10 @@ export async function updateScreenshot(id: string, patch: Database['public']['Ta
   const { error } = await client.from('screenshots').update(patch).eq('id', id).eq('user_id', userId)
   if (!error) return
 
-  // ROCKET_TRADE is an additive enum value. Some already-deployed databases
-  // may still be on the prior enum definition while their migration is
-  // pending. Keep the semantic type in extraction_raw_data and use the
-  // existing PNL enum only as a storage-compatible fallback.
+  // ROCKET_TRADE and LIQUIDATION are additive enum values. Some databases
+  // may still be on the prior enum definition during schema replication.
+  // Keep the semantic type in extraction_raw_data and use a compatible
+  // fallback as temporary storage.
   if (patch.screenshot_type === 'ROCKET_TRADE' && error.code === '22P02') {
     trace('[SUPABASE SCREENSHOT] ROCKET_TRADE enum unavailable; retrying with PNL storage type')
     const fallbackPatch = { ...patch, screenshot_type: 'PNL' as const }
@@ -275,6 +275,15 @@ export async function updateScreenshot(id: string, patch: Database['public']['Ta
     if (!fallback.error) return
     throw databaseError('Supabase screenshot update failed (ROCKET_TRADE compatibility fallback)', fallback.error)
   }
+
+  if (patch.screenshot_type === 'LIQUIDATION' && error.code === '22P02') {
+    trace('[SUPABASE SCREENSHOT] LIQUIDATION enum unavailable (schema replication lag); retrying with UNKNOWN storage type')
+    const fallbackPatch = { ...patch, screenshot_type: 'UNKNOWN' as const }
+    const fallback = await client.from('screenshots').update(fallbackPatch).eq('id', id).eq('user_id', userId)
+    if (!fallback.error) return
+    throw databaseError('Supabase screenshot update failed (LIQUIDATION compatibility fallback)', fallback.error)
+  }
+
   throw databaseError('Supabase screenshot update failed', error)
 }
 
