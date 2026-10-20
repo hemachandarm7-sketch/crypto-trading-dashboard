@@ -416,7 +416,23 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
     : trades.find(trade => trade.id === screenshotRow.data.trade_id)
       ?? trades.find(trade => trade.id === screenshotId)
       ?? null
-  if (!forceCreateNew && matched && data.screenshotType !== 'PNL' && data.screenshotType !== 'ROCKET_TRADE' && matched.status !== 'OPEN') matched = null
+  
+  trace('[MATCHED INITIAL]', {
+    forceCreateNew,
+    selectedTradeId,
+    screenshotRowTradeId: screenshotRow.data.trade_id,
+    matched: matched ? { id: matched.id, status: matched.status, symbol: matched.symbol } : null,
+  })
+  
+  if (!forceCreateNew && matched && data.screenshotType !== 'PNL' && data.screenshotType !== 'ROCKET_TRADE' && matched.status !== 'OPEN') {
+    console.log('[MATCHED FILTER] Nullifying matched because status is not OPEN', {
+      screenshotType: data.screenshotType,
+      matchedStatus: matched.status,
+      matchedId: matched.id,
+      symbol: matched.symbol,
+    })
+    matched = null
+  }
   const eventType: TradeEventType = eventTypeFor(data.screenshotType)
   if (data.screenshotType === 'UNKNOWN' || (!data.symbol && !matched)) {
     await updateScreenshot(screenshotId, {
@@ -523,6 +539,19 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
     }
     if (Object.keys(patch).length) matched = await updateTradeFromExtraction(matched.id, patch)
   } else if (matched && (data.screenshotType === 'POSITION_DETAILS' || data.screenshotType === 'PNL' || data.screenshotType === 'ROCKET_TRADE' || data.screenshotType === 'CLOSE_TRANSACTION' || data.screenshotType === 'LIQUIDATION')) {
+    trace('[MATCHED_TRADE_BRANCH]', {
+      screenshotType: data.screenshotType,
+      matchedId: matched.id,
+      matchedStatus: matched.status,
+      matchedSymbol: matched.symbol,
+      isLiquidation: data.screenshotType === 'LIQUIDATION',
+    })
+    console.log('[MATCHED_TRADE_BRANCH]', {
+      screenshotType: data.screenshotType,
+      matchedId: matched.id,
+      matchedStatus: matched.status,
+      isLiquidation: data.screenshotType === 'LIQUIDATION',
+    })
     // Events are the durable evidence ledger. Combine the screenshots attached
     // to this exact trade ID before updating current trade fields.
     const priorEvents = await listTradeEvents(matched.id)
@@ -541,6 +570,15 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
         pnlPercentage,
       })
     } else if (data.screenshotType === 'LIQUIDATION') {
+      console.log('[LIQUIDATION BRANCH] Entering LIQUIDATION update for existing trade', {
+        matchedTradeId: matched.id,
+        matchedStatus: matched.status,
+        symbol: data.symbol,
+      })
+      trace('[LIQUIDATION_BRANCH_ENTRY]', {
+        matchedTradeId: matched.id,
+        matchedStatus: matched.status,
+      })
       // Handle liquidation: mark trade as LIQUIDATED with liquidation details
       const closePrice = data.liquidationPrice ?? evidence.liquidationPrice ?? null
       const closeTime = data.eventTime ?? null
