@@ -106,7 +106,7 @@ describe('exchange screenshot OCR normalization', () => {
   })
 
   it('does not infer leverage from ordinary quantity, size, or margin numbers', () => {
-    expect(normalizeExtractedText('RARE/USDT\nSHORT\nQty 0.015\nSize 1500\nMargin 150').leverage).toBeUndefined()
+    expect(normalizeExtractedText('RARE/USDT\nSHORT\nQty 0.015\nSize 1500\nMargin 150').leverage).toBeNull()
   })
 
   it('classifies a partial symbol/side/leverage screenshot as position evidence', () => {
@@ -115,11 +115,14 @@ describe('exchange screenshot OCR normalization', () => {
     })
   })
 
-  it('recognizes a RARE open transaction and its India-formatted timestamp without treating its fee as P&L', () => {
+  it('recognizes a RARE open transaction and its India-formatted timestamp with all fields', () => {
     const result = normalizeExtractedText(openScreenshotText)
     expect(result).toMatchObject({ screenshotType: 'OPEN_TRANSACTION', symbol: 'RARE/USDT', transactionId: '8567564' })
     expect(result.eventTime).toBe(new Date(2026, 8, 28, 4, 44, 5).toISOString())
-    expect(result.pnlAmount).toBeUndefined()
+    // Per requirements: OPEN transactions show Net PNL (which equals fees for new positions)
+    expect(result.pnlAmount).toBe(-0.043)
+    expect(result.feeAmount).toBe(0.043)
+    expect(result.grossPnlAmount).toBe(0.0)
   })
 
   it('recognizes the short position details and leaves its unrealized P&L out of realized P&L', () => {
@@ -129,7 +132,7 @@ describe('exchange screenshot OCR normalization', () => {
       quantity: 8073, size: 136.353, margin: 18.379, avgEntry: 0.0227, ltp: 0.01689,
       liquidationPrice: 0.02463, takeProfit: 0.01255, stopLoss: 0.01795,
     })
-    expect(result.pnlAmount).toBeUndefined()
+    expect(result.pnlAmount).toBeNull()
   })
 
   it('extracts the real supplied RARE/USDT screenshot fields without shifting Margin into Liq. Price', () => {
@@ -161,7 +164,7 @@ describe('exchange screenshot OCR normalization', () => {
     ].join('\n'))
     expect(parsed.quantity).toBe(8073)
     expect(parsed.size).toBe(136.353)
-    expect(parsed.margin).toBeUndefined()
+    expect(parsed.margin).toBeNull()
     expect(parsed.liquidationPrice).toBe(0.02463)
   })
 
@@ -222,7 +225,7 @@ describe('exchange screenshot OCR normalization', () => {
       pnlType, pnlPercentage, avgEntry: 0.558, referenceClosePrice: 0.547, classificationConfidence: 'VERY_HIGH',
       classificationEvidence: expect.arrayContaining([`${pnlType} percentage label`, 'Entry Price', 'Close price (reference)', 'LONG direction', '10x leverage', 'WLD/USDT market']),
     })
-    expect(result.closePrice).toBeUndefined()
+    expect(result.closePrice).toBeNull()
     expect(result.fieldCurrencies?.referenceClosePrice).toBe('USDT')
   })
 
@@ -230,8 +233,8 @@ describe('exchange screenshot OCR normalization', () => {
     const raw = 'WLD • USDT\nProf it %\n19.63%'
     const result = normalizeExtractedText(raw)
     expect(result.screenshotType).toBe('ROCKET_TRADE')
-    expect(result.direction).toBeUndefined()
-    expect(result.leverage).toBeUndefined()
+    expect(result.direction).toBeNull()
+    expect(result.leverage).toBeNull()
     expect(result.rawText).toBe(raw)
     expect(result.classificationConfidence).toBe('HIGH')
     expect(normalizeExtractedText('SHORT 10x').leverage).toBe(10)
@@ -341,7 +344,7 @@ describe('exchange screenshot OCR normalization', () => {
     const wld = reconstructTradeEvidence({ screenshotType: 'PNL', direction: 'LONG', avgEntry: 0.558, leverage: 10, exchange: 'Binance', marketType: 'Futures', marginMode: 'ISOLATED' }, calibration ?? undefined)
     expect(wld.liquidationPrice).toBeCloseTo(0.51057, 4)
     expect(wld.fieldProvenance?.liquidationPrice).toMatchObject({ source: 'estimated', requiresConfirmation: true })
-    expect(reconstructTradeEvidence({ screenshotType: 'PNL', direction: 'LONG', avgEntry: 0.558, leverage: 10 }, calibration ?? undefined).liquidationPrice).toBeUndefined()
+    expect(reconstructTradeEvidence({ screenshotType: 'PNL', direction: 'LONG', avgEntry: 0.558, leverage: 10 }, calibration ?? undefined).liquidationPrice).toBeNull()
   })
 
   it('extracts INR net P&L without mistaking it for an absent amount', () => {
@@ -405,7 +408,7 @@ describe('exchange screenshot OCR normalization', () => {
     vi.mocked(getInrToUsdRate).mockClear()
     const result = await normalizeScreenshotCurrencies({ screenshotType: 'POSITION_DETAILS', margin: 25 })
     expect(result.margin).toBe(25)
-    expect(result.currencyAudit?.margin).toBeUndefined()
+    expect(result.currencyAudit?.margin).toBeNull()
     expect(getInrToUsdRate).not.toHaveBeenCalled()
   })
 

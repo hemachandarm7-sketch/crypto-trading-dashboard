@@ -92,10 +92,65 @@ export async function insertTrade(draft: TradeDraft, idempotencyKey?: string): P
 export async function updateTrade(id: string, patch: TradeUpdate): Promise<Trade> {
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
+  
+  // CRITICAL DEBUG: Log the exact patch before conversion
+  console.log('[UPDATE TRADE] Input patch:', {
+    patchKeys: Object.keys(patch),
+    patchStatus: (patch as any).status,
+    patchStatusType: typeof (patch as any).status,
+    patchStatusIsUndefined: (patch as any).status === undefined,
+    patchStatusIsNull: (patch as any).status === null,
+    patch: JSON.stringify(patch, null, 2)
+  })
+  
   const payload = toTradeRow(patch)
+  
+  // CRITICAL DEBUG: Log the exact payload before sending to Supabase
+  console.log('[UPDATE TRADE] Converted payload:', {
+    payloadKeys: Object.keys(payload),
+    payloadStatus: (payload as any).status,
+    payloadStatusType: typeof (payload as any).status,
+    payloadStatusIsUndefined: (payload as any).status === undefined,
+    payloadStatusIsNull: (payload as any).status === null,
+    hasStatusKey: 'status' in payload,
+    payload: JSON.stringify(payload, null, 2)
+  })
+  
+  // Detailed logging for status field specifically
+  trace('[UPDATE TRADE DETAILS]', {
+    id,
+    patchStatus: (patch as any).status,
+    patchStatusType: typeof (patch as any).status,
+    payloadStatus: (payload as any).status,
+    payloadStatusType: typeof (payload as any).status,
+    patchKeys: Object.keys(patch),
+    payloadKeys: Object.keys(payload),
+    hasStatusInPayload: 'status' in payload,
+  })
+  
   trace('[SUPABASE UPDATE]', { table: 'trades', id, payload })
   const { data, error } = await client.from('trades').update(payload).eq('id', id).eq('user_id', userId).select('*').single()
-  if (error) throw databaseError('Supabase trade update failed', error)
+  if (error) {
+    console.error('[UPDATE TRADE] SUPABASE ERROR:', {
+      errorCode: (error as any).code,
+      errorMessage: error.message,
+      constraint: (error as any).constraint,
+      details: (error as any).details,
+      hint: (error as any).hint,
+      statusFromPatch: (patch as any).status,
+      statusFromPayload: (payload as any).status,
+      hasStatusInPayload: 'status' in payload,
+      payloadBeforeSend: JSON.stringify(payload, null, 2)
+    })
+    trace('[SUPABASE ERROR DETAILS]', {
+      errorCode: (error as any).code,
+      errorMessage: error.message,
+      constraint: (error as any).constraint,
+      statusFromPatch: (patch as any).status,
+      statusFromPayload: (payload as any).status,
+    })
+    throw databaseError('Supabase trade update failed', error)
+  }
   trace('[SUPABASE RESPONSE]', { operation: 'update', id: data.id, status: data.status })
   return mapTrade(data)
 }

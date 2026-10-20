@@ -10,6 +10,7 @@ import {
   recordTradeEvent,
   requireTradeEventId,
   listTradeEvents,
+  type TradeDraft,
 } from './tradeRepository'
 import { findDuplicateOpenTrade, findOpenTradeForClose, findOpenTradeForPositionDetails, findTradeForPnl, findTradeForOpenTransaction, normalizeSymbol } from './tradeMatchingService'
 import { calculateSpotPnl, determineCloseReason, formatDuration, resolvePnlPercentage } from './tradeLifecycle'
@@ -233,11 +234,9 @@ export async function processScreenshot(
 export async function confirmManualExtraction(screenshot: Screenshot, data: ExtractedTradeData, selectedTradeId?: string, forceCreateNew = false): Promise<string | null> {
   trace('[FORM CONFIRMED]', { screenshotId: screenshot.id, screenshotType: data.screenshotType, symbol: data.symbol, direction: data.direction, leverage: data.leverage })
   
-  // Auto-set status to LIQUIDATED when LIQUIDATION screenshot type is submitted
-  if (data.screenshotType === 'LIQUIDATION') {
-    data = { ...data, tradeStatus: 'LIQUIDATED' }
-    trace('[LIQUIDATION] Auto-setting status to LIQUIDATED for liquidation screenshot')
-  }
+  // Note: LIQUIDATION screenshot type will be handled in applyExtraction:
+  // - toDraft() sets status to 'LIQUIDATED' for new trades
+  // - applyExtraction() explicitly sets status to 'LIQUIDATED' when updating existing trades
   
   data = reconstructTradeEvidence(data)
   data = await normalizeScreenshotCurrencies(data)
@@ -548,14 +547,32 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
       const pnlAmount = evidence.pnlAmount ?? matched.pnlAmount
       const pnlPercentage = resolvePnlPercentage(evidence.pnlPercentage ?? null, null, matched.pnlPercentage, pnlAmount, evidence.margin ?? matched.margin)
       const holdingSeconds = matched.openTime && closeTime ? Math.max(0, Math.floor((Date.parse(closeTime) - Date.parse(matched.openTime)) / 1000)) : null
-      matched = await updateTradeFromExtraction(matched.id, {
-        ...nonNullPatch(evidence), status: 'LIQUIDATED', closeTime, closePrice,
+      
+      const basePatch = nonNullPatch(evidence)
+      const liquidationPatch: Partial<TradeDraft> = {
+        ...basePatch,
+        status: 'LIQUIDATED' as const,
+        closeTime,
+        closePrice,
         closeReason: null,  // Liquidation has no reason field
         closeTransactionId: data.transactionId ?? matched.closeTransactionId,
-        ...(pnlAmount != null ? { pnlAmount } : {}), pnlPercentage,
+        ...(pnlAmount != null ? { pnlAmount } : {}),
+        pnlPercentage,
         holdingDurationSeconds: Number.isFinite(holdingSeconds) ? holdingSeconds : null,
         holdingDurationDisplay: formatDuration(holdingSeconds),
+      }
+      
+      trace('[LIQUIDATION PATCH]', {
+        status: liquidationPatch.status,
+        statusType: typeof liquidationPatch.status,
+        closeTime: liquidationPatch.closeTime,
+        closePrice: liquidationPatch.closePrice,
+        pnlAmount: liquidationPatch.pnlAmount,
+        tradeId: matched.id,
+        matchedStatus: matched.status,
       })
+      
+      matched = await updateTradeFromExtraction(matched.id, liquidationPatch)
     } else {
       const closePrice = data.closePrice ?? data.transactionPrice ?? evidence.closePrice ?? null
       const closeTime = data.eventTime ?? null

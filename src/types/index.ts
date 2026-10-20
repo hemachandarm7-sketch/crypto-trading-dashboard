@@ -76,11 +76,13 @@ export interface ExtractedTradeData {
   feeAmount?: number | null
   entryNotional?: number | null
   pnlPercentage?: number | null
-  transactionId?: string
-  positionId?: string
-  exchange?: string
-  marketType?: string
-  marginMode?: 'ISOLATED' | 'CROSS'
+  // Liquidation-specific fields
+  liquidationClearance?: number | null
+  transactionId?: string | null
+  positionId?: string | null
+  exchange?: string | null
+  marketType?: string | null
+  marginMode?: ('ISOLATED' | 'CROSS') | null
   rawText?: string
   confidence?: number | null
   /** Set when OCR succeeded but writing its diagnostics to Supabase failed. */

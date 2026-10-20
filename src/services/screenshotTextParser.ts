@@ -59,7 +59,7 @@ function labeledAmount(text: string, label: string): number | undefined {
   return undefined
 }
 
-const amountSectionBoundary = /^\s*(?:Net\s+P(?:NL|&L)|Gross\s+P(?:NL|&L)|Fees?|Profit\s*%|Loss\s*%|ROI|ROE|Entry\s+Price|Close\s+Price|Created\s+At|(?:Qty|Quantity|Size|Margin|Avg\.?\s*Entry|Average\s*Entry|LTP|Last\s*Traded\s*Price|Li[qg]\.?\s*Price|Liquidation\s*Price|TP|Take\s*Profit|SL|Stop\s*Loss|Order\s+ID|Transaction\s+type|Open|Close)\b)/i
+const amountSectionBoundary = /^\s*(?:Net\s+P(?:NL|&L)|Gross\s+P(?:NL|&L)|Fees?|Profit\s*%|Loss\s*%|ROI|ROE|Entry\s+Price|Close\s+Price|Created\s+At|Liquidation\s+[Cc]learance|(?:Qty|Quantity|Size|Margin|Avg\.?\s*Entry|Average\s*Entry|LTP|Last\s*Traded\s*Price|Li[qg]\.?\s*Price|Liquidation\s*Price|TP|Take\s*Profit|SL|Stop\s*Loss|Order\s+ID|Transaction\s+type|Open|Close)\b)/i
 
 function labeledUsdtAmount(text: string, label: string): number | undefined {
   const lines = text.split(/\r?\n/)
@@ -203,13 +203,27 @@ function classify(text: string): ScreenshotType {
   
   const explicitTransaction = text.match(/Transaction\s+type\s*[:#]?\s*(Open|Close)\b/i)?.[1]
   if (explicitTransaction) return explicitTransaction.toLowerCase() === 'open' ? 'OPEN_TRANSACTION' : 'CLOSE_TRANSACTION'
+  
   const transactionDetails = text.match(/Transaction\s+Details[\s\S]{0,300}/i)?.[0]
   const transactionAction = transactionDetails?.match(/\b(Open|Close)\b/i)?.[1]
   if (transactionAction) return transactionAction.toLowerCase() === 'open' ? 'OPEN_TRANSACTION' : 'CLOSE_TRANSACTION'
+  
+  // Check for ROCKET_TRADE indicators early: profit/loss percentage labels with direction
   if (detectLabeledPnlType(text)) return 'ROCKET_TRADE'
+  
+  // Also check for summary card features: Exchange + Market + Direction + Leverage + prices
+  const hasExchange = /\bExchange\b/i.test(text)
+  const hasDirection = /\b(?:Long|Short|LONG|SHORT)\b/i.test(text)
+  const hasLeverage = /\b\d+\s*x\b/i.test(text)
+  const hasPriceInfo = /\b(?:Entry\s+Price|Close\s+Price|Exit\s+Price|Avg\.?\s*Entry)\b/i.test(text)
+  if ((hasExchange || hasDirection || hasLeverage) && hasPriceInfo && detectLabeledPnlType(text)) {
+    return 'ROCKET_TRADE'
+  }
+  
   if (/\b(?:ROI|ROE|P\s*&\s*L|(?:Net|Gross)\s+P(?:NL|&L)|Fees?|Realized\s+Pnl)\b/i.test(text)) return 'PNL'
   if (/\b(?:Qty|Quantity)\b|\bSize\s*\(|\bMargin\s*\(|\bLeverage\b|\bAvg\.?\s*Entry\b|\bLiq\.?\s*Price\b|\bLiquidation\s*Price\b/i.test(text)) return 'POSITION_DETAILS'
   if (/\b(?:LONG|SHORT)\s+\d+(?:\.\d+)?\s*x\b/i.test(text.replace(/\s+/g, ' '))) return 'POSITION_DETAILS'
+  
   const hasOpen = /\bopen\b/i.test(text)
   const hasClose = /\bclose\b/i.test(text)
   if (hasOpen && hasClose) return 'UNKNOWN'
@@ -266,7 +280,10 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const transactionPrice = labeledNumber(text, '(?:Transaction\\s*Price|Price)')
   const grossPnlAmount = labeledAmount(text, 'Gross\\s+P(?:NL|&L)')
   const feeAmount = labeledAmount(text, 'Fees?')
-  const pnlAmount = screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' || screenshotType === 'ROCKET_TRADE' ? labeledAmount(semanticText, 'Net\\s+P(?:NL|&L)') : undefined
+  // Extract Net PNL for all transaction types that display it: OPEN, CLOSE, PNL, ROCKET_TRADE, and LIQUIDATION
+  const pnlAmount = screenshotType === 'OPEN_TRANSACTION' || screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' || screenshotType === 'ROCKET_TRADE' || screenshotType === 'LIQUIDATION' ? labeledAmount(semanticText, 'Net\\s+P(?:NL|&L)') : undefined
+  // For liquidation transactions, also extract the liquidation clearance fee separately
+  const liquidationClearance = screenshotType === 'LIQUIDATION' ? labeledAmount(text, 'Liquidation\\s+clearance') : undefined
   const pnlPercentage = parsePnlPercentage(semanticText)
   const transactionId = text.match(/\b(?:Transaction|Order|Trade)\s*(?:ID|No\.?|#)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
   const positionId = text.match(/\b(?:Position\s*ID|Position\s*No\.?|Contract\s*ID)\s*[:=#]?\s*([A-Z0-9_-]+)/i)?.[1]
@@ -276,7 +293,7 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
   const fieldCurrencies: Partial<Record<MonetaryField, CurrencyCode>> = {}
   const fieldValues: Partial<Record<MonetaryField, number | undefined>> = {
     size, margin, transactionPrice, closePrice, referenceClosePrice, avgEntry, ltp, liquidationPrice, takeProfit, stopLoss,
-    pnlAmount, grossPnlAmount, feeAmount,
+    pnlAmount, grossPnlAmount, feeAmount, liquidationClearance,
   }
   const currencyAudit: NonNullable<ExtractedTradeData['currencyAudit']> = {}
   const currencyCandidates: [MonetaryField, string][] = [
@@ -286,6 +303,8 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
     ['takeProfit', '\\b(?:TP|Take\\s*Profit)\\b'], ['stopLoss', '\\b(?:SL|Stop\\s*Loss)\\b'],
     ['pnlAmount', '\\b(?:Net\\s+P(?:NL|&L)|P\\s*&\\s*L|Profit|Loss)\\b'],
     ['grossPnlAmount', '\\bGross\\s+P(?:NL|&L)\\b'], ['feeAmount', '\\bFees?\\b'],
+    // Liquidation-specific fields
+    ['liquidationClearance', '\\bLiquidation\\s+Clearance\\b'],
   ]
   for (const [field, label] of currencyCandidates) {
     const match = new RegExp(label, 'i').exec(text)
@@ -310,8 +329,15 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
         rateSource: null, convertedAt: null, alternateValues: [{ value: alternateInr, currency: 'INR' }],
       }
     }
+    // For INR-only fields (e.g., liquidationClearance), create a basic audit entry
+    if (field === 'liquidationClearance' && value != null && currency === 'INR') {
+      currencyAudit[field] = {
+        originalValue: value, originalCurrency: 'INR', usdRate: null, rateDate: null,
+        rateSource: null, convertedAt: null, alternateValues: [],
+      }
+    }
   }
-  if (screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' || screenshotType === 'ROCKET_TRADE') {
+  if (screenshotType === 'CLOSE_TRANSACTION' || screenshotType === 'PNL' || screenshotType === 'ROCKET_TRADE' || screenshotType === 'LIQUIDATION') {
     if (pnlAmount != null && labeledUsdtAmount(text, 'Net\\s+P(?:NL|&L)') != null) fieldCurrencies.pnlAmount = 'USDT'
     else if (pnlAmount != null && !fieldCurrencies.pnlAmount) fieldCurrencies.pnlAmount = detectCurrency(text) ?? undefined
   }
@@ -332,11 +358,13 @@ export function normalizeExtractedText(text: string, confidence?: number): Extra
     leverage != null ? `${leverage}x leverage` : null,
     normalizedSymbol ? `${normalizedSymbol} market` : null,
   ].filter((item): item is string => item != null) : undefined
+  // Convert all missing fields to null (not undefined or 0)
+  // Unknown values must be null to distinguish from "not applicable" or "not yet determined"
   return {
-    screenshotType, classificationConfidence, classificationEvidence, symbol: normalizedSymbol, quoteCurrency, direction, pnlType,
-    eventTime: parseOcrEventTime(text), closePrice, referenceClosePrice, transactionPrice, leverage, quantity, size, margin, avgEntry, ltp,
-    liquidationPrice, takeProfit, stopLoss, pnlAmount, grossPnlAmount, feeAmount, pnlPercentage: pnlPercentage ?? undefined, transactionId, positionId, exchange,
-    marketType: marketType?.toLowerCase() === 'spot' ? 'Spot' : marketType ? marketType[0].toUpperCase() + marketType.slice(1).toLowerCase() : undefined,
-    marginMode, rawText, confidence, fieldCurrencies, fieldProvenance, currencyAudit,
+    screenshotType, classificationConfidence, classificationEvidence, symbol: normalizedSymbol ?? null, quoteCurrency: quoteCurrency ?? null, direction: direction ?? null, pnlType: pnlType ?? null,
+    eventTime: parseOcrEventTime(text) ?? null, closePrice: closePrice ?? null, referenceClosePrice: referenceClosePrice ?? null, transactionPrice: transactionPrice ?? null, leverage: leverage ?? null, quantity: quantity ?? null, size: size ?? null, margin: margin ?? null, avgEntry: avgEntry ?? null, ltp: ltp ?? null,
+    liquidationPrice: liquidationPrice ?? null, takeProfit: takeProfit ?? null, stopLoss: stopLoss ?? null, pnlAmount: pnlAmount ?? null, grossPnlAmount: grossPnlAmount ?? null, feeAmount: feeAmount ?? null, liquidationClearance: liquidationClearance ?? null, pnlPercentage: pnlPercentage ?? null, transactionId: transactionId ?? null, positionId: positionId ?? null, exchange: exchange ?? null,
+    marketType: marketType?.toLowerCase() === 'spot' ? 'Spot' : marketType ? marketType[0].toUpperCase() + marketType.slice(1).toLowerCase() : null,
+    marginMode: marginMode ?? null, rawText, confidence, fieldCurrencies, fieldProvenance, currencyAudit,
   }
 }

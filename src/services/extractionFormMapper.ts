@@ -10,6 +10,7 @@ export interface ExtractionFormValues {
 const numericFields = [
   'transactionPrice', 'closePrice', 'referenceClosePrice', 'leverage', 'quantity', 'size', 'margin', 'avgEntry', 'ltp',
   'liquidationPrice', 'takeProfit', 'stopLoss', 'pnlAmount', 'grossPnlAmount', 'feeAmount', 'entryNotional', 'pnlPercentage',
+  'liquidationClearance',
 ] as const
 
 function toLocalDateTime(value?: string | null): string {

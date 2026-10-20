@@ -90,20 +90,28 @@ export function normalizeProfitLossLabels(text: string): string {
 
 export function detectLabeledPnlType(text: string): LabeledPnlType | null {
   const normalized = normalizeProfitLossLabels(text)
-  const hasProfit = /\bprofit\s*[.:=_-]*\s*%/i.test(normalized)
-  const hasLoss = /\bloss\s*[.:=_-]*\s*%/i.test(normalized)
+  // Match "Profit: X%" or "Profit % : X" or similar formats
+  // Also match "Loss: X%" or "Loss % : X"
+  const hasProfit = /\bprofit\b.*?[\d,]+(?:\.\d+)?\s*%/is.test(normalized)
+  const hasLoss = /\bloss\b.*?[\d,]+(?:\.\d+)?\s*%/is.test(normalized)
   if (hasProfit === hasLoss) return null
   return hasProfit ? 'PROFIT' : 'LOSS'
 }
 
 export function parsePnlPercentage(text: string): number | null {
   const normalized = normalizeProfitLossLabels(text)
-  const profit = normalized.match(/\bprofit\s*[.:=_-]*\s*%\s*[:=]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
-  const loss = normalized.match(/\bloss\s*[.:=_-]*\s*%\s*[:=]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
+  
+  // Match "Profit: X%" or "Profit % : X" formats
+  // The regex now handles both "profit %" and "profit:" patterns
+  const profit = normalized.match(/\bprofit\b\s*(?:[.:=_-]*\s*%\s*)?[:=]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
+  const loss = normalized.match(/\bloss\b\s*(?:[.:=_-]*\s*%\s*)?[:=]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
+  
   if (profit && loss) return null
   if (profit) return Math.abs(Number(profit[1].replace(/\s/g, '')))
   if (loss) return -Math.abs(Number(loss[1].replace(/\s/g, '')))
+  
   const roi = text.match(/\b(?:ROI|ROE)\s*[:=#]?\s*([+-]?\s*\d+(?:\.\d+)?)\s*%?/i)
   if (roi) return Number(roi[1].replace(/\s/g, ''))
+  
   return null
 }
