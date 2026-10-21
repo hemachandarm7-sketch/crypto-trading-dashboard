@@ -107,6 +107,31 @@ export async function insertTrade(draft: TradeDraft, idempotencyKey?: string): P
     })),
   })
   
+  // CRITICAL: Validate status before INSERT
+  if ('status' in payload) {
+    const statusValue = payload.status
+    const validStatuses = ['OPEN', 'CLOSED', 'LIQUIDATED']
+    const isValidStatus = validStatuses.includes(statusValue as string)
+    
+    console.log('[PRE_INSERT_VALIDATION]', {
+      statusPresent: true,
+      statusValue,
+      statusType: typeof statusValue,
+      isValidStatus,
+      validStatusesAllowed: validStatuses,
+      willFailConstraint: !isValidStatus,
+    })
+    
+    if (!isValidStatus) {
+      console.error('[VALIDATION_FAILURE_PRE_INSERT]', {
+        error: `Status "${statusValue}" violates constraint: allowed values are ${validStatuses.join(', ')}`,
+        statusValue,
+        statusType: typeof statusValue,
+        statusLength: String(statusValue).length,
+      })
+    }
+  }
+  
   const { data, error } = await client.from('trades').insert(payload).select('*').single()
   if (error) {
     console.error('[INSERT_TRADE] SUPABASE ERROR - 23514 CONSTRAINT:', {
@@ -176,6 +201,31 @@ export async function updateTrade(id: string, patch: TradeUpdate): Promise<Trade
   })
   
   trace('[SUPABASE UPDATE]', { table: 'trades', id, payload })
+  
+  // CRITICAL: Validate status before sending if present in payload
+  if ('status' in payload) {
+    const statusValue = (payload as any).status
+    const validStatuses = ['OPEN', 'CLOSED', 'LIQUIDATED']
+    const isValidStatus = validStatuses.includes(statusValue)
+    
+    console.log('[PRE_UPDATE_VALIDATION]', {
+      statusPresent: true,
+      statusValue,
+      statusType: typeof statusValue,
+      isValidStatus,
+      validStatusesAllowed: validStatuses,
+      willFailConstraint: !isValidStatus,
+    })
+    
+    if (!isValidStatus) {
+      console.error('[VALIDATION_FAILURE_PRE_UPDATE]', {
+        error: `Status "${statusValue}" violates constraint: allowed values are ${validStatuses.join(', ')}`,
+        statusValue,
+        statusType: typeof statusValue,
+        statusLength: String(statusValue).length,
+      })
+    }
+  }
   
   // Log every field in the payload with its type
   console.log('[UPDATE PAYLOAD DETAILED]', {
