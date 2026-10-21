@@ -94,13 +94,31 @@ export async function insertTrade(draft: TradeDraft, idempotencyKey?: string): P
     payload: JSON.stringify(payload, null, 2)
   })
   
+  console.log('[INSERT_PAYLOAD_ALL_FIELDS]', {
+    payloadFieldCount: Object.keys(payload).length,
+    fields: Object.entries(payload).map(([k, v]) => ({
+      field: k,
+      value: v,
+      type: typeof v,
+      isNull: v === null,
+      isUndefined: v === undefined,
+      stringValue: typeof v === 'string' ? v : String(v),
+      charCodes: typeof v === 'string' ? v.split('').map(c => c.charCodeAt(0)) : [],
+    })),
+  })
+  
   const { data, error } = await client.from('trades').insert(payload).select('*').single()
   if (error) {
-    console.error('[INSERT_TRADE] SUPABASE ERROR:', {
+    console.error('[INSERT_TRADE] SUPABASE ERROR - 23514 CONSTRAINT:', {
       errorCode: (error as any).code,
       errorMessage: error.message,
       constraint: (error as any).constraint,
+      details: (error as any).details,
+      hint: (error as any).hint,
       statusFromPayload: payload.status,
+      statusLength: String(payload.status ?? '').length,
+      statusCharCodes: String(payload.status ?? '').split('').map(c => c.charCodeAt(0)),
+      allFields: Object.entries(payload).map(([k, v]) => `${k}=${JSON.stringify(v)}`),
     })
     if (idempotencyKey && error.code === '23505') {
       const { data: existing, error: lookupError } = await client.from('trades').select('*')
@@ -158,6 +176,21 @@ export async function updateTrade(id: string, patch: TradeUpdate): Promise<Trade
   })
   
   trace('[SUPABASE UPDATE]', { table: 'trades', id, payload })
+  
+  // Log every field in the payload with its type
+  console.log('[UPDATE PAYLOAD DETAILED]', {
+    payloadFieldCount: Object.keys(payload).length,
+    payloadFields: Object.entries(payload).map(([k, v]) => ({
+      field: k,
+      value: v,
+      type: typeof v,
+      isNull: v === null,
+      isUndefined: v === undefined,
+      stringValue: String(v),
+      hasWhitespace: typeof v === 'string' && (v !== v.trim()),
+    })),
+  })
+  
   const { data, error } = await client.from('trades').update(payload).eq('id', id).eq('user_id', userId).select('*').single()
   if (error) {
     console.error('[UPDATE TRADE] SUPABASE ERROR:', {
@@ -168,7 +201,10 @@ export async function updateTrade(id: string, patch: TradeUpdate): Promise<Trade
       hint: (error as any).hint,
       statusFromPatch: (patch as any).status,
       statusFromPayload: (payload as any).status,
+      statusLength: String(payload.status ?? '').length,
+      statusCharCodes: String(payload.status ?? '').split('').map(c => c.charCodeAt(0)),
       hasStatusInPayload: 'status' in payload,
+      allPayloadKeys: Object.keys(payload),
       payloadBeforeSend: JSON.stringify(payload, null, 2)
     })
     trace('[SUPABASE ERROR DETAILS]', {

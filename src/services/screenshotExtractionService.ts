@@ -503,6 +503,13 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
     console.log('═══════════════════════════════════════════════════════════════')
     console.log('NO MATCHED TRADE - CREATING NEW TRADE')
     console.log('═══════════════════════════════════════════════════════════════')
+    console.log('[CRITICAL] INSERT PATH TAKEN (NOT UPDATE)', {
+      screenshotType: data.screenshotType,
+      symbol: data.symbol,
+      selectedTradeId,
+      forceCreateNew,
+      reason: 'No matched trade found (trade matching failed or no trade exists)',
+    })
     console.log('[NO_MATCHED_TRADE] Creating new trade for LIQUIDATION', {
       screenshotType: data.screenshotType,
       symbol: data.symbol,
