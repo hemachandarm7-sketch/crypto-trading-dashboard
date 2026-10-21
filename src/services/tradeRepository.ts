@@ -62,7 +62,23 @@ export async function listTrades(): Promise<Trade[]> {
 export async function insertTrade(draft: TradeDraft, idempotencyKey?: string): Promise<Trade> {
   const client = requireSupabase()
   const userId = await ensureSupabaseUser()
+  
+  console.log('[INSERT_TRADE] Input draft:', {
+    status: draft.status,
+    statusType: typeof draft.status,
+    symbol: draft.symbol,
+    draftKeys: Object.keys(draft),
+  })
+  
   const payload = mapFormToTradeInsert(draft, userId, idempotencyKey)
+  
+  console.log('[INSERT_TRADE] After mapFormToTradeInsert:', {
+    status: payload.status,
+    statusType: typeof payload.status,
+    hasStatus: 'status' in payload,
+    payloadKeys: Object.keys(payload),
+  })
+  
   const safePayload = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'user_id'))
   trace('[TRADE PAYLOAD]', safePayload)
   trace('[SUPABASE INSERT]', {
@@ -71,8 +87,21 @@ export async function insertTrade(draft: TradeDraft, idempotencyKey?: string): P
     entry: payload.avg_entry, close: payload.close_price, margin: payload.margin, size: payload.size,
     quantity: payload.quantity, pnl: payload.pnl_amount, currency: 'USD',
   })
+  
+  console.log('[INSERT_TRADE] Final payload being sent to Supabase:', {
+    status: payload.status,
+    statusType: typeof payload.status,
+    payload: JSON.stringify(payload, null, 2)
+  })
+  
   const { data, error } = await client.from('trades').insert(payload).select('*').single()
   if (error) {
+    console.error('[INSERT_TRADE] SUPABASE ERROR:', {
+      errorCode: (error as any).code,
+      errorMessage: error.message,
+      constraint: (error as any).constraint,
+      statusFromPayload: payload.status,
+    })
     if (idempotencyKey && error.code === '23505') {
       const { data: existing, error: lookupError } = await client.from('trades').select('*')
         .eq('id', idempotencyKey).eq('user_id', userId).maybeSingle()

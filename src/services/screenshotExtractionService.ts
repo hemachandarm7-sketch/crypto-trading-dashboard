@@ -485,14 +485,28 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   }
 
   if (!matched) {
+    console.log('═══════════════════════════════════════════════════════════════')
+    console.log('NO MATCHED TRADE - CREATING NEW TRADE')
+    console.log('═══════════════════════════════════════════════════════════════')
+    console.log('[NO_MATCHED_TRADE] Creating new trade for LIQUIDATION', {
+      screenshotType: data.screenshotType,
+      symbol: data.symbol,
+    })
     // A valid typed screenshot is sufficient to create a partial trade. Missing
     // direction/position values remain NULL until later evidence is reviewed.
     const draft = toDraft(reconstructTradeEvidence(data), data.screenshotType === 'OPEN_TRANSACTION')
+    
+    console.log('[DRAFT_CREATED] From toDraft:', {
+      status: draft.status,
+      statusType: typeof draft.status,
+      symbol: draft.symbol,
+    })
     
     // LIQUIDATION screenshot type should already set status to LIQUIDATED in toDraft,
     // but we ensure it here as a safety check and set additional fields
     if (data.screenshotType === 'LIQUIDATION') {
       trace('[LIQUIDATION] Before override:', { status: draft.status })
+      console.log('[LIQUIDATION_OVERRIDE] Before:', { status: draft.status })
       draft.status = 'LIQUIDATED' // Force to LIQUIDATED (should already be from toDraft)
       draft.closeTime = data.eventTime ?? new Date().toISOString()
       draft.closePrice = data.liquidationPrice ?? null
@@ -505,9 +519,20 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
         closeTime: draft.closeTime,
         closePrice: draft.closePrice
       })
+      console.log('[LIQUIDATION_OVERRIDE] After:', {
+        status: draft.status,
+        statusType: typeof draft.status,
+        draftKeys: Object.keys(draft),
+      })
     }
     
     trace('[APPLY_EXTRACTION] About to insert trade with status:', { status: draft.status, screenshotType: data.screenshotType })
+    console.log('[INSERT_TRADE_CALL] Inserting with status:', {
+      status: draft.status,
+      statusType: typeof draft.status,
+      screenshotType: data.screenshotType,
+      symbol: draft.symbol,
+    })
     matched = await insertTrade(draft, screenshotId)
     trace('[TRADE_CREATED]', { 
       tradeId: matched?.id, 
@@ -539,6 +564,9 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
     }
     if (Object.keys(patch).length) matched = await updateTradeFromExtraction(matched.id, patch)
   } else if (matched && (data.screenshotType === 'POSITION_DETAILS' || data.screenshotType === 'PNL' || data.screenshotType === 'ROCKET_TRADE' || data.screenshotType === 'CLOSE_TRANSACTION' || data.screenshotType === 'LIQUIDATION')) {
+    console.log('═══════════════════════════════════════════════════════════════')
+    console.log('MATCHED TRADE FOUND - UPDATING EXISTING TRADE')
+    console.log('═══════════════════════════════════════════════════════════════')
     trace('[MATCHED_TRADE_BRANCH]', {
       screenshotType: data.screenshotType,
       matchedId: matched.id,
@@ -608,6 +636,23 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
         pnlAmount: liquidationPatch.pnlAmount,
         tradeId: matched.id,
         matchedStatus: matched.status,
+      })
+      
+      console.log('[LIQUIDATION PATCH COMPLETE]', {
+        patchKeys: Object.keys(liquidationPatch),
+        status: liquidationPatch.status,
+        statusType: typeof liquidationPatch.status,
+        statusExists: 'status' in liquidationPatch,
+        closeReason: liquidationPatch.closeReason,
+        closeTime: liquidationPatch.closeTime,
+        closePrice: liquidationPatch.closePrice,
+        pnlAmount: liquidationPatch.pnlAmount,
+        pnlPercentage: liquidationPatch.pnlPercentage,
+        holdingDurationSeconds: liquidationPatch.holdingDurationSeconds,
+        tradeId: matched.id,
+        matchedStatus: matched.status,
+        matchedSymbol: matched.symbol,
+        fullPatch: JSON.stringify(liquidationPatch, null, 2),
       })
       
       matched = await updateTradeFromExtraction(matched.id, liquidationPatch)
