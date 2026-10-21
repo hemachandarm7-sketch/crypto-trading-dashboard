@@ -456,6 +456,21 @@ export async function applyExtraction(screenshotId: string, data: ExtractedTrade
   if (!forceCreateNew && !matched && data.screenshotType === 'POSITION_DETAILS') matched = findOpenTradeForPositionDetails(trades, data)
   if (!forceCreateNew && !matched && data.screenshotType === 'PNL') matched = findTradeForPnl(trades, data)
   if (!forceCreateNew && !matched && data.screenshotType === 'ROCKET_TRADE') matched = findTradeForPnl(trades, data)
+  if (!forceCreateNew && !matched && data.screenshotType === 'LIQUIDATION') {
+    matched = findOpenTradeForClose(trades, data)
+    trace('[LIQUIDATION_MATCH]', {
+      found: !!matched,
+      matchedId: matched?.id,
+      symbol: data.symbol,
+      direction: data.direction,
+    })
+    console.log('[LIQUIDATION_MATCH]', {
+      found: !!matched,
+      matchedId: matched?.id,
+      symbol: data.symbol,
+      direction: data.direction,
+    })
+  }
 
   const sameSideOpenTrades = data.symbol && data.direction ? trades.filter(trade => trade.status === 'OPEN'
     && normalizeSymbol(trade.symbol) === normalizeSymbol(data.symbol)
