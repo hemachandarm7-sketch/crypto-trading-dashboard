@@ -19,6 +19,7 @@ export interface Trade {
   exchange: string | null
   marketType: string | null
   direction: Direction | null
+  position?: Direction | null  // Legacy column: mirrors direction, required by trades_position_check constraint
   leverage: number | null
   quantity: number | null
   size: number | null

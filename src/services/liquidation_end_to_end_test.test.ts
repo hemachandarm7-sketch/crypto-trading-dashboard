@@ -13,17 +13,7 @@ describe('LIQUIDATION Confirmation End-to-End Flow', () => {
       eventTime: '2024-10-21T14:30:00Z',
     }
 
-    // Step 2: matched trade from database
-    const matchedTrade = {
-      id: 'trade-uuid-123',
-      symbol: 'RECALL/USDT',
-      direction: 'LONG',
-      status: 'OPEN',
-      openTime: '2024-10-20T10:00:00Z',
-      avgEntry: 0.037,
-    }
-
-    // Step 3: Construct liquidationPatch (exact code from line 640-651)
+    // Step 2: Construct liquidationPatch (exact code from line 640-651)
     const basePatch = {} // nonNullPatch(evidence) returns empty or partial object
 
     const liquidationPatch = {
@@ -49,7 +39,7 @@ describe('LIQUIDATION Confirmation End-to-End Flow', () => {
     expect(typeof liquidationPatch.status).toBe('string')
     expect('status' in liquidationPatch).toBe(true)
 
-    // Step 4: Simulate toTradeRow conversion
+    // Step 3: Simulate toTradeRow conversion
     function toTradeRow(trade: any) {
       const fields: any = {}
       const mapping = {
@@ -82,7 +72,7 @@ describe('LIQUIDATION Confirmation End-to-End Flow', () => {
       payloadFull: JSON.stringify(payload, null, 2),
     })
 
-    // Step 5: Validation (what my new code does)
+    // Step 4: Validation (what my new code does)
     const validStatuses = ['OPEN', 'CLOSED', 'LIQUIDATED']
     const isValidStatus = validStatuses.includes(payload.status as string)
 

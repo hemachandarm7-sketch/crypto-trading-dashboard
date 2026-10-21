@@ -308,7 +308,8 @@ function toDraft(data: ExtractedTradeData, useEventAsOpenTime = data.screenshotT
   
   return {
     symbol: data.symbol, exchange: data.exchange ?? null, marketType: data.marketType ?? null,
-    direction: data.direction ?? null, leverage: data.leverage ?? null, quantity: data.quantity ?? null, size: data.size ?? null,
+    direction: data.direction ?? null, position: data.direction ?? null, // position mirrors direction for trades_position_check constraint
+    leverage: data.leverage ?? null, quantity: data.quantity ?? null, size: data.size ?? null,
     margin: data.margin ?? null, avgEntry: initialPrice ?? null, ltp: data.ltp ?? null,
     liquidationPrice: data.liquidationPrice ?? null, takeProfit: data.takeProfit ?? null, stopLoss: data.stopLoss ?? null,
     // A P&L or position screenshot timestamp is not the moment the position opened.

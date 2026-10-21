@@ -22,6 +22,7 @@ function databaseError(context: string, error: { message: string; code?: string;
 export function mapTrade(row: TradeRow): Trade {
   return {
     id: row.id, symbol: row.symbol, exchange: row.exchange, marketType: row.market_type, direction: row.direction,
+    position: (row as any).position,  // Legacy column for trades_position_check constraint
     leverage: row.leverage, quantity: row.quantity, size: row.size, margin: row.margin, avgEntry: row.avg_entry,
     ltp: row.ltp, liquidationPrice: row.liquidation_price, takeProfit: row.take_profit, stopLoss: row.stop_loss,
     openTime: row.open_time, closeTime: row.close_time, holdingDurationSeconds: row.holding_duration_seconds,
@@ -327,7 +328,7 @@ export function mapFormToTradeInsert(trade: TradeDraft, userId: string, idempote
 function toTradeRow(trade: Partial<TradeDraft>): Partial<TradeRow> {
   const fields: Partial<TradeRow> = {}
   const mapping = {
-    symbol: 'symbol', exchange: 'exchange', marketType: 'market_type', direction: 'direction', leverage: 'leverage',
+    symbol: 'symbol', exchange: 'exchange', marketType: 'market_type', direction: 'direction', position: 'position', leverage: 'leverage',
     quantity: 'quantity', size: 'size', margin: 'margin', avgEntry: 'avg_entry', ltp: 'ltp',
     liquidationPrice: 'liquidation_price', takeProfit: 'take_profit', stopLoss: 'stop_loss', openTime: 'open_time',
     closeTime: 'close_time', holdingDurationSeconds: 'holding_duration_seconds', holdingDurationDisplay: 'holding_duration_display',
