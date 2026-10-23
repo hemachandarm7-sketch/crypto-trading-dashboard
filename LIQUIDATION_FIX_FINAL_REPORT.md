@@ -335,11 +335,13 @@ Test a LIQUIDATION confirmation:
 
 ## Security Note
 
-The following credentials have appeared in this conversation and in committed files and should be rotated:
+The following credentials were exposed during development and MUST be rotated immediately:
 
-- GitHub token: `[REDACTED]` ⚠️ ROTATE
-- Supabase anon key: `[REDACTED]` ⚠️ ROTATE
-- Vercel token: `[REDACTED]` ⚠️ ROTATE
+- GitHub token: `[REDACTED]` ⚠️ **MUST ROTATE IMMEDIATELY**
+- Supabase anon key: `[REDACTED]` ⚠️ **MUST ROTATE IMMEDIATELY**
+- Vercel token: `[REDACTED]` ⚠️ **MUST ROTATE IMMEDIATELY**
+
+**Action Required:** Rotate all credentials immediately after deployment on GitHub, Supabase, and Vercel.
 
 ---
 

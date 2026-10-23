@@ -314,10 +314,10 @@ Non-Critical Pre-Existing Issues:
     Fix: Update assertion to expect null instead of undefined (future session)
 
 Credentials to Rotate:
-  ⚠️ GitHub Token: [REDACTED]
-  ⚠️ Supabase Anon Key: [REDACTED]
-  ⚠️ Vercel Token: [REDACTED]
-  Action: Rotate after deployment to be safe
+  ⚠️ GitHub Token: [REDACTED - rotate immediately after deployment]
+  ⚠️ Supabase Anon Key: [REDACTED - rotate immediately after deployment]
+  ⚠️ Vercel Token: [REDACTED - rotate immediately after deployment]
+  Action: ALL CREDENTIALS MUST BE ROTATED IMMEDIATELY AFTER DEPLOYMENT
 
 ═══════════════════════════════════════════════════════════════════════════════
 
