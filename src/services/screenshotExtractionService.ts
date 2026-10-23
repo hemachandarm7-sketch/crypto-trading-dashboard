@@ -259,11 +259,15 @@ export async function normalizeScreenshotCurrencies(data: ExtractedTradeData): P
   for (const field of monetaryFields) {
     const value = data[field]
     if (typeof value !== 'number' || !Number.isFinite(value)) continue
-    if (data.currencyAudit?.[field]) continue
+    if (data.currencyAudit?.[field]) continue  // Already audited
     const currency: CurrencyCode | undefined = data.fieldCurrencies?.[field]
       ?? (data.symbol?.toUpperCase().includes('/USDT') ? 'USDT' : undefined)
     // Unmarked currencies remain auditable in OCR raw text, and are never guessed into INR.
-    if (!currency) continue
+    if (!currency) {
+      // Field has a value but no currency information - set audit to null to indicate "no currency data"
+      normalized.currencyAudit![field] = null
+      continue
+    }
     let usdRate: number | null = currency === 'INR' ? null : 1
     let rateDate: string | null = currency === 'INR' ? null : sourceDate
     if (currency === 'INR') {

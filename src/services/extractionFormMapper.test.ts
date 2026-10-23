@@ -33,7 +33,7 @@ describe('mapExtractionToForm', () => {
       values: {
         transactionPrice: '', closePrice: '', referenceClosePrice: '', leverage: '', quantity: '', size: '', margin: '',
         avgEntry: '', ltp: '', liquidationPrice: '', takeProfit: '', stopLoss: '', pnlAmount: '', pnlPercentage: '',
-        grossPnlAmount: '', feeAmount: '', entryNotional: '',
+        grossPnlAmount: '', feeAmount: '', entryNotional: '', liquidationClearance: '',
       },
     })
   })

@@ -144,6 +144,21 @@ export function reconstructTradeEvidence(data: ExtractedTradeData, calibration?:
     reconstructed.fieldProvenance!.liquidationPrice = liquidation.provenance
   }
 
+  // Normalize undefined values to null for consistency with normalizeExtractedText
+  // All missing or explicitly undefined values must be null, not undefined
+  const nullableFields = [
+    'symbol', 'quoteCurrency', 'direction', 'pnlType', 'eventTime', 'transactionPrice', 'closePrice', 'referenceClosePrice',
+    'closeNotional', 'leverage', 'quantity', 'size', 'margin', 'avgEntry', 'ltp', 'liquidationPrice', 'takeProfit', 'stopLoss',
+    'pnlAmount', 'grossPnlAmount', 'feeAmount', 'entryNotional', 'pnlPercentage', 'liquidationClearance', 'transactionId', 'positionId', 'exchange', 'marketType', 'marginMode'
+  ] as const
+
+  for (const field of nullableFields) {
+    const value = (reconstructed as unknown as Record<string, unknown>)[field]
+    if (value === undefined) {
+      (reconstructed as unknown as Record<string, unknown>)[field] = null
+    }
+  }
+
   return reconstructed
 }
 

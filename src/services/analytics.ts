@@ -82,16 +82,20 @@ export function buildDirectionPerformance(trades: Trade[]) {
   return (['LONG', 'SHORT'] as const).map(direction => ({
     direction,
     pnl: closedTradesWithKnownPnl(trades).filter(trade => trade.direction === direction).reduce((sum, trade) => sum + trade.pnlAmount, 0),
-    trades: trades.filter(trade => trade.status === 'CLOSED' && trade.direction === direction).length,
+    // ✅ Include both CLOSED and LIQUIDATED trades for accurate direction analysis
+    trades: trades.filter(trade => (trade.status === 'CLOSED' || trade.status === 'LIQUIDATED') && trade.direction === direction).length,
   }))
 }
 
 export function buildCoinPerformance(trades: Trade[]) {
-  const symbols = [...new Set(trades.filter(trade => trade.status === 'CLOSED' && trade.pnlAmount != null).map(trade => trade.symbol))]
+  // ✅ Include both CLOSED and LIQUIDATED trades for comprehensive coin performance analysis
+  const symbols = [...new Set(trades.filter(trade => (trade.status === 'CLOSED' || trade.status === 'LIQUIDATED') && trade.pnlAmount != null).map(trade => trade.symbol))]
   return symbols.map(symbol => ({ symbol, pnl: closedTradesWithKnownPnl(trades).filter(trade => trade.symbol === symbol).reduce((sum, trade) => sum + trade.pnlAmount, 0) }))
 }
 
 export function buildCloseReasonPerformance(trades: Trade[]) {
+  // Note: LIQUIDATED trades are excluded as they have different close reasons (LIQUIDATION_CLEARANCE)
+  // This function tracks intentional exit reasons (TP_HIT, SL_HIT, MANUAL_CLOSE) for CLOSED trades only
   return (['TP_HIT', 'SL_HIT', 'MANUAL_CLOSE'] as const).map(reason => ({
     reason, count: trades.filter(trade => trade.status === 'CLOSED' && trade.closeReason === reason).length,
   }))

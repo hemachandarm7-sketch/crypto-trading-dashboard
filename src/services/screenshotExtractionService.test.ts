@@ -54,7 +54,7 @@ Avg. Entry LTP Liq. Price
 0.02270 0.01689 0.02463
 TP :0.01255 SL:0.01795`
 const rareShort: Trade = {
-  id: 'rare-short', symbol: 'RARE/USDT', exchange: null, marketType: 'Futures', direction: 'SHORT',
+  id: 'rare-short', symbol: 'RARE/USDT', exchange: null, marketType: 'Futures', direction: 'SHORT', position: 'SHORT',
   leverage: 10, quantity: 8073, size: 136.353, margin: 18.379, avgEntry: 0.0227, ltp: 0.01689,
   liquidationPrice: 0.02463, takeProfit: 0.01255, stopLoss: 0.01795,
   openTime: new Date(2026, 8, 28, 4, 44, 5).toISOString(), closeTime: null, holdingDurationSeconds: null,

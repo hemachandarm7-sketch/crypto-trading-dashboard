@@ -116,6 +116,13 @@ export function findOpenTradeForClose(trades: Trade[], data: ExtractedTradeData)
     if (exact.length > 1) return null
   }
   
+  // If no direction was specified in close data, reject if candidates have conflicting directions
+  // (ambiguous which side to close)
+  if (!data.direction && candidates.length > 1) {
+    const directions = new Set(candidates.map(t => t.direction).filter(d => d != null))
+    if (directions.size > 1) return null  // Multiple different directions: can't close unambiguously
+  }
+  
   if (data.eventTime) {
     const closeMs = Date.parse(data.eventTime)
     if (Number.isFinite(closeMs)) candidates = candidates.filter(trade => !trade.openTime || Date.parse(trade.openTime) <= closeMs)
@@ -133,8 +140,8 @@ export function findOpenTradeForClose(trades: Trade[], data: ExtractedTradeData)
   if (corroborated.length === 0) return null
   if (corroborated.length === 1) return corroborated[0]
   
-  // If multiple matches, prefer the most recently created trade (assume newest = current session's trade)
-  // This avoids matching to old/stale trades when there are multiple OPEN trades with same symbol/direction
+  // If multiple matches with same direction, prefer the most recently created trade
+  // (assume newest = current session's trade to avoid matching to stale trades)
   const mostRecent = corroborated.reduce((newest, current) => 
     new Date(current.createdAt).getTime() > new Date(newest.createdAt).getTime() ? current : newest
   )
@@ -150,11 +157,19 @@ export function findTradeForPnl(trades: Trade[], data: ExtractedTradeData): Trad
     && sameExchange(trade, data)
     && (data.leverage == null || trade.leverage == null || data.leverage === trade.leverage)
     && valuesMatch(data.avgEntry ?? data.transactionPrice, trade.avgEntry))
+  
+  // Early disambiguation with IDs
   if (data.positionId) {
     const exact = candidates.filter(trade => trade.exchangePositionId === data.positionId)
     if (exact.length === 1) return exact[0]
     if (exact.length > 1) return null
   }
+  if (data.transactionId) {
+    const exact = candidates.filter(trade => trade.closeTransactionId === data.transactionId || trade.openTransactionId === data.transactionId)
+    if (exact.length === 1) return exact[0]
+    if (exact.length > 1) return null
+  }
+  
   if (data.eventTime) {
     candidates = candidates.filter(trade => {
       const distanceToOpen = timeDistance(trade.openTime, data.eventTime)
@@ -168,6 +183,7 @@ export function findTradeForPnl(trades: Trade[], data: ExtractedTradeData): Trad
     // unique active trade. Symbol/side/leverage alone can describe repetitions.
     candidates = candidates.filter(trade => trade.status === 'OPEN')
   }
+  
   const hasStrongEvidence = (trade: Trade) => Boolean(data.positionId || data.transactionId)
     || (data.eventTime != null && ((timeDistance(trade.openTime, data.eventTime) ?? Infinity) <= 10 * 60_000
       || (timeDistance(trade.closeTime, data.eventTime) ?? Infinity) <= 10 * 60_000))
@@ -177,8 +193,13 @@ export function findTradeForPnl(trades: Trade[], data: ExtractedTradeData): Trad
   if (corroborated.length === 0) return null
   if (corroborated.length === 1) return corroborated[0]
   
-  // If multiple matches, prefer the most recently created trade
-  // This avoids matching to old/stale trades when there are multiple candidates
+  // If multiple matches without a disambiguating ID/timestamp, reject the match
+  // We can't safely determine which trade this P&L belongs to
+  if (!data.positionId && !data.transactionId && !data.eventTime) {
+    return null
+  }
+  
+  // If we have eventTime but multiple candidates still match, prefer the closest one
   const mostRecent = corroborated.reduce((newest, current) => 
     new Date(current.createdAt).getTime() > new Date(newest.createdAt).getTime() ? current : newest
   )

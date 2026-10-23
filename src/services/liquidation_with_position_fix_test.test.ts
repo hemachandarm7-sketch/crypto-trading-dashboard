@@ -69,11 +69,7 @@ describe('LIQUIDATION with Position Field Fix', () => {
   })
 
   it('should pass trades_position_check constraint validation', () => {
-    // Simulate constraint validation
-    function trades_position_check(position: unknown): boolean {
-      return position === 'LONG' || position === 'SHORT'
-    }
-
+    // Simulate constraint validation logic
     const testCases = [
       { position: 'LONG', shouldPass: true },
       { position: 'SHORT', shouldPass: true },
