@@ -264,8 +264,8 @@ export async function normalizeScreenshotCurrencies(data: ExtractedTradeData): P
       ?? (data.symbol?.toUpperCase().includes('/USDT') ? 'USDT' : undefined)
     // Unmarked currencies remain auditable in OCR raw text, and are never guessed into INR.
     if (!currency) {
-      // Field has a value but no currency information - leave audit undefined to indicate "no currency data"
-      // Note: Don't set currencyAudit[field] = null here - Partial<Record<>> allows undefined but not null
+      // Field has a value but no currency information - explicitly set to null to indicate field was checked but no currency found
+      normalized.currencyAudit![field] = null
       continue
     }
     let usdRate: number | null = currency === 'INR' ? null : 1
