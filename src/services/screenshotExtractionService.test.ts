@@ -198,7 +198,7 @@ describe('exchange screenshot OCR normalization', () => {
     ].join('\n'))
     expect(parsed).toMatchObject({
       screenshotType: 'ROCKET_TRADE', symbol: 'WLD/USDT', direction: 'LONG', leverage: 10,
-      avgEntry: 0.558, referenceClosePrice: 0.547, closePrice: undefined, pnlType: 'LOSS', grossPnlAmount: -2.101, pnlAmount: -2.163,
+      avgEntry: 0.558, referenceClosePrice: 0.547, closePrice: null, pnlType: 'LOSS', grossPnlAmount: -2.101, pnlAmount: -2.163,
       feeAmount: 0.062, pnlPercentage: -19.63,
     })
     expect(parsed.fieldCurrencies).toMatchObject({ grossPnlAmount: 'USDT', pnlAmount: 'USDT', feeAmount: 'USDT' })
