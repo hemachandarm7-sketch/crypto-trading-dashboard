@@ -15,7 +15,7 @@ export type CurrencyAudit = Partial<Record<MonetaryField, {
   rateSource?: string | null
   convertedAt?: string | null
   alternateValues?: Array<{ value: number; currency: CurrencyCode }>
-}>>
+} | null>>
 
 export function formatCurrencyUSD(value: number | null | undefined, _sourceCurrency?: string): string {
   void _sourceCurrency
