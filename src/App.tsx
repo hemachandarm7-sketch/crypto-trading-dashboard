@@ -24,7 +24,7 @@ const CREATE_NEW_TRADE = '__create_new_trade__'
 const usd = (value: number | null | undefined, currency = 'USD') => formatCurrencyUSD(value, currency)
 const pct = (value: number | null | undefined) => value == null || !Number.isFinite(value) ? '—' : `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
 const localDate = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
-const draftFromTrade = (trade?: Trade): TradeDraft => trade ? {
+const draftFromTrade = (trade?: Trade | null, defaultSettings?: UserSettings): TradeDraft => trade ? {
   symbol: trade.symbol, exchange: trade.exchange, marketType: trade.marketType, direction: trade.direction, leverage: trade.leverage,
   quantity: trade.quantity, size: trade.size, margin: trade.margin, avgEntry: trade.avgEntry, ltp: trade.ltp,
   liquidationPrice: trade.liquidationPrice, takeProfit: trade.takeProfit, stopLoss: trade.stopLoss, openTime: trade.openTime,
@@ -33,7 +33,7 @@ const draftFromTrade = (trade?: Trade): TradeDraft => trade ? {
   closeReason: trade.closeReason, setup: trade.setup, notes: trade.notes, exchangePositionId: trade.exchangePositionId,
   openTransactionId: trade.openTransactionId, closeTransactionId: trade.closeTransactionId,
 } : {
-  symbol: '', exchange: defaultUserSettings.defaultExchange, marketType: defaultUserSettings.defaultMarket, direction: 'LONG', leverage: 3,
+  symbol: '', exchange: defaultSettings?.defaultExchange ?? defaultUserSettings.defaultExchange, marketType: defaultSettings?.defaultMarket ?? defaultUserSettings.defaultMarket, direction: 'LONG', leverage: defaultSettings?.defaultLeverage ?? defaultUserSettings.defaultLeverage,
   quantity: null, size: null, margin: null, avgEntry: null, ltp: null, liquidationPrice: null, takeProfit: null, stopLoss: null,
   openTime: null, closeTime: null, holdingDurationSeconds: null, holdingDurationDisplay: null, closePrice: null, pnlAmount: null,
   pnlPercentage: null, status: 'OPEN', closeReason: null, setup: null, notes: null, exchangePositionId: null,
@@ -54,7 +54,7 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState('ALL')
   const [filterDirection, setFilterDirection] = useState('ALL')
   const [filterExchange, setFilterExchange] = useState('ALL')
-  const [analyticsRange, setAnalyticsRange] = useState('All Time')
+  const [analyticsRange, setAnalyticsRange] = useState(settings?.defaultRange ?? 'All Time')
   const [dragging, setDragging] = useState(false)
   const [working, setWorking] = useState(false)
   const [success, setSuccess] = useState<string | null>(null)
@@ -82,6 +82,7 @@ export default function App() {
 
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
   useEffect(() => { document.documentElement.dataset.theme = settings.theme }, [settings.theme])
+  useEffect(() => { setAnalyticsRange(settings.defaultRange) }, [settings.defaultRange])
   useEffect(() => {
     if (previousPage.current !== page) {
       previousPage.current = page
@@ -289,7 +290,7 @@ export default function App() {
         {page === 'Settings' && <SettingsPage key={identity.id} settings={settings} onSave={changeSettings} identity={identity} tradeCount={trades.length} working={working} onLinkWorkspace={linkCurrentWorkspace} onFinishAccount={completeCurrentAccount} onRequestReset={requestCurrentPasswordReset} onLogout={logOut}/>}
       </div>
     </main>
-    {tradeForm && <TradeEditor trade={tradeForm === 'new' ? null : tradeForm} onClose={() => setTradeForm(null)} onSave={saveTrade} working={working}/>}
+    {tradeForm && <TradeEditor trade={tradeForm === 'new' ? null : tradeForm} onClose={() => setTradeForm(null)} onSave={saveTrade} working={working} settings={settings}/>}
     {detailTrade && <TradeDetail trade={detailTrade} screenshots={screenshots.filter(screenshot => screenshot.tradeId === detailTrade.id)} onClose={() => setDetailTrade(null)} onEdit={() => { setTradeForm(detailTrade); setDetailTrade(null) }} onDelete={() => void deleteTrade(detailTrade)} currency={settings.currency}/>}
     {reviewScreenshot && <ManualExtractionReview screenshot={reviewScreenshot} trades={trades} onClose={() => setReviewScreenshot(null)} onSave={manualExtraction} working={working} saveError={reviewSaveError}/>}
   </div>
@@ -420,8 +421,8 @@ function SettingsPage({ settings, onSave, identity, tradeCount, working, onLinkW
 }
 function SettingRow({ label, description, children }: { label:string; description:string; children:React.ReactNode }) { return <div className="setting-row"><div><b>{label}</b><small>{description}</small></div>{children}</div> }
 
-function TradeEditor({ trade, onClose, onSave, working }: { trade:Trade|null; onClose:()=>void; onSave:(draft:TradeDraft,trade?:Trade)=>Promise<void>; working:boolean }) {
-  const [form,setForm]=useState<TradeDraft>(()=>draftFromTrade(trade??undefined))
+function TradeEditor({ trade, onClose, onSave, working, settings }: { trade:Trade|null; onClose:()=>void; onSave:(draft:TradeDraft,trade?:Trade)=>Promise<void>; working:boolean; settings:UserSettings }) {
+  const [form,setForm]=useState<TradeDraft>(()=>draftFromTrade(trade??null, settings))
   const patch=<K extends keyof TradeDraft>(key:K,value:TradeDraft[K])=>setForm(current=>({...current,[key]:value}))
   const numeric=(key:keyof TradeDraft,label:string,value:number|null,step='any')=><label>{label}<input type="number" step={step} value={value??''} onChange={event=>patch(key,(event.target.value===''?null:Number(event.target.value)) as TradeDraft[typeof key])}/></label>
   const date=(key:'openTime'|'closeTime',label:string,value:string|null)=><label>{label}<input type="datetime-local" value={value?new Date(value).toISOString().slice(0,16):''} onChange={event=>patch(key,event.target.value?new Date(event.target.value).toISOString():null)}/></label>
