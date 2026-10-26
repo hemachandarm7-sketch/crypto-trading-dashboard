@@ -138,11 +138,18 @@ export interface AnalyticsSummary {
   totalTrades: number
   openTrades: number
   closedTrades: number
+  // Exit method counts (independent of outcome)
   tpHits: number
   slHits: number
-  manualClosures: number
+  manualClosures: number // ⚠️ DEPRECATED - use profitableManual + losingManual instead
   liquidations: number
-  liquidationLoss: number  // ✅ NEW: Track liquidation loss separately
+  liquidationLoss: number
+  // ✅ NEW: Outcome-based classification (how many trades were profitable/losing)
+  profitableWithTp: number // Winning trades that hit TP target
+  losingWithSl: number // Losing trades that hit SL
+  profitableManual: number // Profitable manual closes
+  losingManual: number // Losing manual closes
+  breakEvenTrades: number // Trades with zero PNL
   averageHoldingTimeSeconds: number | null
 }
 
