@@ -328,7 +328,7 @@ function Numeric({ value, currency = 'USDT', percentValue = false }: { value: nu
 }
 const chartTooltip = { contentStyle: { background: '#151b22', border: '1px solid #303842', borderRadius: 10, color: '#edf2f7', fontSize: 12 }, labelStyle: { color: '#9aa5b3' }, itemStyle: { color: '#e5ebf2' }, formatter: (value: number) => formatCurrencyUSD(value) }
 
-function Dashboard({ trades, positions, stats, now, onAdd, onUpload, onTrades, onDetail, currency, dataUnavailable }: { trades: Trade[]; positions: Trade[]; stats: ReturnType<typeof getAnalytics>; now: number; onAdd: () => void; onUpload: () => void; onTrades: () => void; onDetail: (trade: Trade) => void; currency: string; dataUnavailable: boolean }) {
+function Dashboard({ trades, positions, stats, now, onAdd, onUpload, onTrades, onDetail, currency }: { trades: Trade[]; positions: Trade[]; stats: ReturnType<typeof getAnalytics>; now: number; onAdd: () => void; onUpload: () => void; onTrades: () => void; onDetail: (trade: Trade) => void; currency: string; dataUnavailable?: boolean }) {
   const realized = getRealizedPnl(trades)
   const equity = buildEquityCurve(trades)
   const closed = trades.filter(trade => trade.status === 'CLOSED')
@@ -338,17 +338,324 @@ function Dashboard({ trades, positions, stats, now, onAdd, onUpload, onTrades, o
   const monthlyPnl = closed.filter(trade => trade.closeTime?.slice(0, 7) === month).reduce((sum, trade) => sum + (trade.pnlAmount ?? 0), 0)
   const totalOpenMargin = positions.reduce((sum, trade) => sum + (trade.margin ?? 0), 0)
   const timeBuckets = buildPnlBuckets(trades, 'day').slice(-14)
-  return <><PageTitle eyebrow={new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}).toUpperCase()} title="Good morning, trader" description="Your database-backed trading journal at a glance." action={<><Button secondary><CalendarDays size={15}/>{settingsLabel('All time')}</Button><Button onClick={onAdd}><Plus size={16}/> Add trade</Button></>}/>
-    <div className="stats-grid dashboard-stats"><StatCard label="Total trades" value={String(stats.totalTrades)} icon={BarChart3}/><StatCard label="Open positions" value={String(stats.openTrades)} icon={Activity}/><StatCard label="Closed trades" value={String(stats.closedTrades)} icon={Check}/><StatCard label="Total investment" value={usd(stats.totalInvestment,currency)} icon={Wallet}/><StatCard label="Realized P&L" value={usd(realized,currency)} icon={TrendingUp}/><StatCard label="Total profit" value={usd(stats.totalProfit,currency)} icon={TrendingUp}/><StatCard label="Total loss" value={usd(-stats.totalLoss,currency)} icon={ArrowDownRight}/><StatCard label="Win rate" value={`${stats.winRate.toFixed(1)}%`} icon={ShieldCheck}/><StatCard label="Loss rate" value={`${stats.lossRate.toFixed(1)}%`} icon={Activity}/><StatCard label="Profit %" value={`${((stats.totalProfit / (stats.totalProfit + stats.totalLoss)) * 100 || 0).toFixed(1)}%`} icon={TrendingUp}/><StatCard label="Loss %" value={`${((stats.totalLoss / (stats.totalProfit + stats.totalLoss)) * 100 || 0).toFixed(1)}%`} icon={ArrowDownRight}/><StatCard label="Today's P&L" value={usd(todayPnl,currency)} icon={Clock3} detail="Known, realized P&L today"/><StatCard label="Monthly P&L" value={usd(monthlyPnl,currency)} icon={CalendarDays} detail="Known, realized P&L this month"/></div>
-    <div className="dashboard-grid"><section className="panel equity-panel"><div className="panel-head"><div><h2>Portfolio performance</h2><p>Equity curve from closed trades with known P&L</p></div><span className="subtle-badge">Database records</span></div><div className="chart-legend"><span><i className="legend-line"/>Equity</span><span><i className="legend-dot"/>Daily P&L</span></div><div className="large-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={equity}><defs><linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#54d6a0" stopOpacity={.21}/><stop offset="100%" stopColor="#54d6a0" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#242c35" strokeDasharray="4 5" vertical={false}/><XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill:'#778391',fontSize:11}}/><YAxis tickFormatter={(value:number)=>formatCurrencyUSD(value)} axisLine={false} tickLine={false} tick={{fill:'#778391',fontSize:11}} width={49}/><Tooltip {...chartTooltip}/><Area type="monotone" dataKey="equity" stroke="#59d8a2" strokeWidth={2.4} fill="url(#equityFill)"/></AreaChart></ResponsiveContainer></div><div className="chart-summary"><span>Realized P&L <b>{usd(realized,currency)}</b></span><span>Win rate <b>{stats.winRate.toFixed(1)}%</b></span><span>Open margin <b>{usd(totalOpenMargin,currency)}</b></span></div></section>
-      <section className="panel positions-panel"><div className="panel-head"><div><h2>Open positions <span className="count-badge">{positions.length}</span></h2><p>Current journal exposure</p></div><button className="text-button" onClick={onTrades}>Trades <ArrowUpRight size={14}/></button></div><div className="position-list">{positions.slice(0,5).map(trade=><div className="position-row clickable" key={trade.id} onClick={() => onDetail(trade)}><span className="coin-icon">{trade.symbol.slice(0,1)}</span><span className="position-name"><b>{trade.symbol} <i>{trade.direction}</i></b><small>{trade.exchange ?? 'Exchange unset'} · {trade.leverage ?? '—'}×</small></span><span className="position-price"><b>{usd(trade.avgEntry,currency)}</b><small>Entry · {localDate(trade.openTime)}</small></span><span className="position-pnl"><b>{trade.status}</b><small>Running {formatDuration(getTradeHoldingSeconds(trade,now))}</small></span></div>)}</div><div className="panel-bottom"><span>Live prices</span><b className="muted">Not connected</b></div></section>
-      <section className="panel recent-panel"><div className="panel-head"><div><h2>Recent trades</h2><p>Latest saved trade records</p></div><button className="text-button" onClick={onTrades}>All trades <ArrowUpRight size={14}/></button></div><TradeTable trades={[...trades].sort((a,b)=>(b.openTime??b.createdAt).localeCompare(a.openTime??b.createdAt)).slice(0,5)} now={now} currency={currency} onOpen={onDetail} showEmptyState={false}/>{trades.length===0&&!dataUnavailable&&<div className="empty-state"><Search size={22}/><b>No saved trades</b><span>Upload your first trade to start tracking performance.</span><button className="text-button" onClick={onUpload}>Upload your first trade <ArrowUpRight size={14}/></button></div>}</section>
-      <section className="panel insight-panel"><div className="panel-head"><div><h2>Trading snapshot</h2><p>Only trades with reported P&L are scored</p></div></div><div className="snapshot-main"><div className="snapshot-ring" style={{'--value':`${stats.winRate}%`} as React.CSSProperties}><div><b>{stats.winRate.toFixed(0)}%</b><small>win rate</small></div></div><div className="snapshot-stats"><span><i className="win-dot"/>Profitable <b>{Math.round(stats.closedTrades * stats.winRate / 100)}</b></span><span><i className="loss-dot"/>Losing <b>{Math.round(stats.closedTrades * stats.lossRate / 100)}</b></span><span><i className="open-dot"/>Breakeven <b>{stats.breakEvenTrades ?? 0}</b></span></div></div><div className="snapshot-footer"><span>Profit factor</span><b>{Number.isFinite(stats.profitFactor)?stats.profitFactor.toFixed(2):'—'}</b><span className="snapshot-pill"><ShieldCheck size={13}/>Database</span></div></section>
-      <section className="panel recent-panel"><div className="panel-head"><div><h2>Daily P&L</h2><p>Recent closed trade results</p></div></div><div className="small-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={timeBuckets}><CartesianGrid stroke="#242c35" strokeDasharray="4 5" vertical={false}/><XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill:'#778391',fontSize:9}}/><YAxis tickFormatter={(value:number)=>formatCurrencyUSD(value)} axisLine={false} tickLine={false} tick={{fill:'#778391',fontSize:9}}/><Tooltip {...chartTooltip}/><Bar dataKey="pnl" radius={[4,4,0,0]}>{timeBuckets.map((point,index)=><Cell key={index} fill={point.pnl>=0?'#55d69e':'#fa7180'}/>)}</Bar></BarChart></ResponsiveContainer></div></section>
+  const profitableCount = Math.round(stats.closedTrades * stats.winRate / 100)
+  const losingCount = Math.round(stats.closedTrades * stats.lossRate / 100)
+  const breakEvenCount = stats.breakEvenTrades ?? 0
+  const profitFactor = Number.isFinite(stats.profitFactor) ? stats.profitFactor : null
+  
+  // Date formatter for greeting
+  const dateString = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+  
+  return <>
+    {/* Premium Header with Greeting and Actions */}
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-sm font-medium text-emerald-500 uppercase tracking-wide">{dateString}</p>
+          <h1 className="text-4xl md:text-5xl font-bold mt-2 bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">Good morning, trader</h1>
+          <p className="text-slate-400 mt-3">Your portfolio performance at a glance</p>
+        </div>
+        <div className="flex gap-3 flex-wrap md:flex-nowrap">
+          <Button secondary><CalendarDays size={16}/> All time</Button>
+          <Button onClick={onAdd}><Plus size={16}/> Add trade</Button>
+        </div>
+      </div>
     </div>
+
+    {/* Premium Portfolio Summary - Metrics Grid */}
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <DashboardMetricCard 
+        label="Realized P&L" 
+        value={usd(realized, currency)} 
+        icon={TrendingUp}
+        color="emerald"
+        onClick={onTrades}
+        subtext={realized >= 0 ? "↑ Positive returns" : "↓ Negative returns"}
+      />
+      <DashboardMetricCard 
+        label="Total Profit" 
+        value={usd(stats.totalProfit, currency)} 
+        icon={ArrowUpRight}
+        color="emerald"
+        onClick={onTrades}
+        subtext={`${profitableCount} winning trades`}
+      />
+      <DashboardMetricCard 
+        label="Total Loss" 
+        value={usd(-stats.totalLoss, currency)} 
+        icon={ArrowDownRight}
+        color="rose"
+        onClick={onTrades}
+        subtext={`${losingCount} losing trades`}
+      />
+      <DashboardMetricCard 
+        label="Win Rate" 
+        value={`${stats.winRate.toFixed(1)}%`} 
+        icon={ShieldCheck}
+        color="blue"
+        onClick={onTrades}
+        subtext={`${profitableCount}W ${losingCount}L ${breakEvenCount}BE`}
+      />
+    </div>
+
+    {/* Extended Metrics for Context */}
+    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <DashboardCompactCard label="Open" value={String(stats.openTrades)} icon={Activity} />
+      <DashboardCompactCard label="Closed" value={String(stats.closedTrades)} icon={Check} />
+      <DashboardCompactCard label="Total" value={String(stats.totalTrades)} icon={BarChart3} />
+      <DashboardCompactCard label="Capital Invested" value={usd(stats.totalInvestment, currency)} icon={Wallet} />
+      <DashboardCompactCard label="Profit Factor" value={profitFactor?.toFixed(2) ?? '—'} icon={TrendingUp} />
+      <DashboardCompactCard label="Margin in Use" value={usd(totalOpenMargin, currency)} icon={Clock3} />
+    </div>
+
+    {/* Main Content Grid - Charts and Details */}
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Left Column - Large Chart */}
+      <div className="lg:col-span-2 space-y-6">
+        {/* Equity Curve */}
+        <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6 backdrop-blur-sm hover:border-emerald-500/30 transition-colors">
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Portfolio Performance</h2>
+              <p className="text-sm text-slate-400 mt-1">Equity curve from closed trades with known P&L</p>
+            </div>
+            <span className="text-xs bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded">Database</span>
+          </div>
+          <div className="h-72 -mx-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={equity} margin={{top: 10, right: 30, left: 0, bottom: 0}}>
+                <defs>
+                  <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.3}/>
+                    <stop offset="100%" stopColor="#10b981" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="#1e293b" strokeDasharray="4 5" vertical={false}/>
+                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill:'#94a3b8',fontSize:11}}/>
+                <YAxis tickFormatter={(v:number)=>formatCurrencyUSD(v)} axisLine={false} tickLine={false} tick={{fill:'#94a3b8',fontSize:11}} width={50}/>
+                <Tooltip {...chartTooltip}/>
+                <Area type="monotone" dataKey="equity" stroke="#10b981" strokeWidth={3} fill="url(#equityGrad)"/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex flex-wrap gap-6 mt-6 pt-6 border-t border-slate-700">
+            <div><span className="text-slate-400 text-sm">Total Realized</span><br/><b className="text-white text-lg">{usd(realized, currency)}</b></div>
+            <div><span className="text-slate-400 text-sm">Average Win Rate</span><br/><b className="text-white text-lg">{stats.winRate.toFixed(1)}%</b></div>
+            <div><span className="text-slate-400 text-sm">Open Margin</span><br/><b className="text-white text-lg">{usd(totalOpenMargin, currency)}</b></div>
+          </div>
+        </section>
+
+        {/* Daily P&L Chart */}
+        <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6 backdrop-blur-sm">
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Daily P&L (Last 14 Days)</h2>
+              <p className="text-sm text-slate-400 mt-1">Recent closed trade results by day</p>
+            </div>
+          </div>
+          <div className="h-52 -mx-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={timeBuckets} margin={{top: 5, right: 30, left: 0, bottom: 0}}>
+                <CartesianGrid stroke="#1e293b" strokeDasharray="4 5" vertical={false}/>
+                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill:'#94a3b8',fontSize:9}}/>
+                <YAxis tickFormatter={(v:number)=>formatCurrencyUSD(v)} axisLine={false} tickLine={false} tick={{fill:'#94a3b8',fontSize:9}} width={45}/>
+                <Tooltip {...chartTooltip}/>
+                <Bar dataKey="pnl" radius={[6,6,0,0]}>
+                  {timeBuckets.map((point, index) => (
+                    <Cell key={index} fill={point.pnl >= 0 ? '#10b981' : '#ef4444'}/>
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      </div>
+
+      {/* Right Column - Positions and Quick Stats */}
+      <div className="space-y-6">
+        {/* Open Positions */}
+        <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6 backdrop-blur-sm">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                Open Positions 
+                <span className="bg-emerald-500/20 text-emerald-400 text-xs px-2 py-1 rounded-full">{positions.length}</span>
+              </h2>
+            </div>
+            <button onClick={onTrades} className="text-emerald-400 hover:text-emerald-300 text-sm font-medium flex items-center gap-1">
+              View all <ArrowUpRight size={14}/>
+            </button>
+          </div>
+          <div className="space-y-3">
+            {positions.length === 0 ? (
+              <div className="text-center py-8"><Activity size={24} className="mx-auto text-slate-600 mb-2"/><p className="text-slate-400 text-sm">No open positions</p></div>
+            ) : (
+              positions.slice(0, 5).map(trade => (
+                <div key={trade.id} onClick={() => onDetail(trade)} className="bg-slate-700/30 hover:bg-slate-700/50 rounded-lg p-3 cursor-pointer transition-colors border border-slate-600 hover:border-emerald-500/30">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">{trade.symbol.slice(0, 1)}</span>
+                        <div>
+                          <b className="text-white text-sm">{trade.symbol}</b>
+                          <span className={`ml-2 text-xs px-1.5 py-0.5 rounded ${trade.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                            {trade.direction}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">{localDate(trade.openTime)}</p>
+                    </div>
+                    <div className="text-right text-sm">
+                      <b className="text-white">{usd(trade.avgEntry, currency)}</b>
+                      <p className="text-xs text-slate-400">{trade.leverage}× · {trade.exchange}</p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        {/* Trading Metrics */}
+        <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6 backdrop-blur-sm">
+          <h2 className="text-lg font-semibold text-white mb-4">Trade Outcomes</h2>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between py-2 border-b border-slate-600">
+              <span className="flex items-center gap-2 text-slate-300"><span className="w-2 h-2 rounded-full bg-emerald-500"></span>Profitable</span>
+              <b className="text-white">{profitableCount}</b>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-slate-600">
+              <span className="flex items-center gap-2 text-slate-300"><span className="w-2 h-2 rounded-full bg-rose-500"></span>Losing</span>
+              <b className="text-white">{losingCount}</b>
+            </div>
+            <div className="flex items-center justify-between py-2">
+              <span className="flex items-center gap-2 text-slate-300"><span className="w-2 h-2 rounded-full bg-slate-500"></span>Breakeven</span>
+              <b className="text-white">{breakEvenCount}</b>
+            </div>
+          </div>
+          <div className="mt-6 pt-6 border-t border-slate-600">
+            <p className="text-xs text-slate-400 mb-2">Profit Factor</p>
+            <p className="text-2xl font-bold text-white">{profitFactor ? profitFactor.toFixed(2) : '—'}</p>
+          </div>
+        </section>
+
+        {/* Time Period Metrics */}
+        <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6 backdrop-blur-sm">
+          <h2 className="text-lg font-semibold text-white mb-4">Period Performance</h2>
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Today</p>
+              <p className={`text-xl font-bold ${todayPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{usd(todayPnl, currency)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 mb-1">This Month</p>
+              <p className={`text-xl font-bold ${monthlyPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{usd(monthlyPnl, currency)}</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    {/* Recent Trades Section */}
+    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6 backdrop-blur-sm">
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Recent Trades</h2>
+          <p className="text-sm text-slate-400 mt-1">Latest saved trade records</p>
+        </div>
+        <button onClick={onTrades} className="text-emerald-400 hover:text-emerald-300 text-sm font-medium flex items-center gap-1">
+          View all <ArrowUpRight size={14}/>
+        </button>
+      </div>
+      {trades.length === 0 ? (
+        <div className="text-center py-12">
+          <Search size={28} className="mx-auto text-slate-600 mb-3"/>
+          <b className="text-slate-300 block">No saved trades</b>
+          <p className="text-slate-400 text-sm mt-1">Upload your first trade to start tracking performance.</p>
+          <div className="mt-4">
+            <Button secondary onClick={onUpload}>
+              <Upload size={14}/> Upload first trade
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <TradeTable 
+          trades={[...trades].sort((a,b)=>(b.openTime??b.createdAt).localeCompare(a.openTime??a.createdAt)).slice(0,8)} 
+          now={now} 
+          currency={currency} 
+          onOpen={onDetail} 
+          showEmptyState={false}
+        />
+      )}
+    </section>
   </>
 }
-function settingsLabel(value: string) { return value }
+
+/**
+ * Premium metric card with click action and color coding
+ */
+function DashboardMetricCard({ label, value, icon: Icon, color, onClick, subtext }: {
+  label: string
+  value: string
+  icon: typeof TrendingUp
+  color: 'emerald' | 'rose' | 'blue'
+  onClick?: () => void
+  subtext?: string
+}) {
+  const bgColor = {
+    emerald: 'bg-emerald-500/10 border-emerald-500/30 hover:border-emerald-500/50',
+    rose: 'bg-rose-500/10 border-rose-500/30 hover:border-rose-500/50',
+    blue: 'bg-blue-500/10 border-blue-500/30 hover:border-blue-500/50',
+  }[color]
+  const textColor = {
+    emerald: 'text-emerald-400',
+    rose: 'text-rose-400',
+    blue: 'text-blue-400',
+  }[color]
+  const iconColor = {
+    emerald: 'bg-emerald-500/20 text-emerald-400',
+    rose: 'bg-rose-500/20 text-rose-400',
+    blue: 'bg-blue-500/20 text-blue-400',
+  }[color]
+
+  return (
+    <div 
+      onClick={onClick}
+      className={`border rounded-lg p-5 backdrop-blur-sm transition-all cursor-pointer ${bgColor} ${onClick ? 'hover:scale-105' : ''}`}
+    >
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          <p className="text-sm font-medium text-slate-400">{label}</p>
+          <p className={`text-3xl font-bold mt-2 ${textColor}`}>{value}</p>
+          {subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}
+        </div>
+        <div className={`rounded-lg p-2 ${iconColor}`}>
+          <Icon size={20}/>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Compact metric card for extended context metrics
+ */
+function DashboardCompactCard({ label, value, icon: Icon }: {
+  label: string
+  value: string
+  icon: typeof Activity
+}) {
+  return (
+    <div className="bg-slate-700/30 border border-slate-600 rounded-lg p-4 hover:border-slate-500 transition-colors">
+      <div className="flex items-start justify-between mb-2">
+        <p className="text-xs font-medium text-slate-400">{label}</p>
+        <Icon size={16} className="text-slate-500"/>
+      </div>
+      <p className="text-lg font-bold text-white">{value}</p>
+    </div>
+  )
+}
+
 
 function TradeTable({ trades, now, currency, onOpen, onEdit, onDelete, showEmptyState = true }: { trades: Trade[]; now: number; currency: string; onOpen?: (trade:Trade)=>void; onEdit?: (trade:Trade)=>void; onDelete?: (trade:Trade)=>void; showEmptyState?: boolean }) {
   return <div className="table-wrap"><table><thead><tr><th>DATE</th><th>SYMBOL</th><th>DIRECTION</th><th>LEV.</th><th>QTY</th><th>MARGIN</th><th>AVG ENTRY</th><th>CLOSE PRICE</th><th>TP</th><th>SL</th><th>P&L</th><th>P&L %</th><th>STATUS</th><th>CLOSE REASON</th><th>HOLDING TIME</th>{onEdit&&<th>Actions</th>}</tr></thead><tbody>{trades.map(trade=>{const seconds=getTradeHoldingSeconds(trade,now);return <tr key={trade.id} className={onOpen?'click-row':''} onClick={()=>onOpen?.(trade)}><td>{trade.openTime?new Date(trade.openTime).toLocaleDateString():'—'}</td><td><div className="asset-cell"><span className="asset-logo">{trade.symbol.slice(0,1)}</span><span><b>{trade.symbol}</b><small>{trade.exchange??'Exchange unset'} · {trade.marketType??'Market unset'}</small></span></div></td><td><span className={`direction ${trade.direction?.toLowerCase() ?? 'unknown'}`}>{trade.direction ?? '—'}</span></td><td>{trade.leverage==null?'—':`${trade.leverage}×`}</td><td>{trade.quantity??'—'}</td><td>{usd(trade.margin,currency)}</td><td>{usd(trade.avgEntry,currency)}</td><td>{usd(trade.closePrice,currency)}</td><td>{usd(trade.takeProfit,currency)}</td><td>{usd(trade.stopLoss,currency)}</td><td><Numeric value={trade.pnlAmount} currency={currency}/></td><td><Numeric value={trade.pnlPercentage} percentValue/></td><td><span className={`status status-${trade.status.toLowerCase()}`}><i/>{trade.status}</span></td><td>{trade.closeReason??'—'}</td><td>{trade.status==='OPEN'?`Running: ${formatDuration(seconds)}`:`Held: ${formatDuration(seconds)}`}</td>{onEdit&&<td><div className="row-actions" onClick={event=>event.stopPropagation()}><button onClick={()=>onEdit(trade)} aria-label="Edit trade"><SlidersHorizontal size={15}/></button><button onClick={()=>onDelete?.(trade)} aria-label="Delete trade"><Trash2 size={15}/></button></div></td>}</tr>})}</tbody></table>
