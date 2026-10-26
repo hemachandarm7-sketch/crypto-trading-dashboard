@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { classifyTradeOutcome, getAnalytics, buildExitMethodOutcomeAnalysis } from './analytics'
 import type { Trade } from '../types'
 
+// Note: classifyTradeOutcomeForFilter is tested in App.test.ts
+// as it's used in the App component for filtering
+
 /**
  * Test suite for trade outcome classification
  * Verifies that outcomes are determined by PNL, not by closeReason

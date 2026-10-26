@@ -14,6 +14,17 @@ import { AccountGate, PasswordRecovery, SessionLoading } from './components/Acco
 import type { CloseReason, Direction, ExtractedTradeData, Screenshot, ScreenshotType, Trade, UserSettings } from './types'
 import { formatCurrencyUSD } from './utils/currency'
 
+/**
+ * Classify trade outcome based on realized net PNL (including fees)
+ * Outcomes: PROFIT (PNL > 0), LOSS (PNL < 0), BREAKEVEN (PNL = 0), OPEN (still open)
+ */
+function classifyTradeOutcomeForFilter(trade: Trade): 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'OPEN' {
+  if (trade.status === 'OPEN') return 'OPEN'
+  if (trade.pnlAmount === null || trade.pnlAmount === 0) return 'BREAKEVEN'
+  if (trade.pnlAmount > 0) return 'PROFIT'
+  return 'LOSS'
+}
+
 type Page = 'Dashboard' | 'Trades' | 'Open Positions' | 'Upload Screenshot' | 'Analytics' | 'Settings'
 const navigation: { page: Page; icon: typeof LayoutDashboard }[] = [
   { page: 'Dashboard', icon: LayoutDashboard }, { page: 'Trades', icon: BarChart3 }, { page: 'Open Positions', icon: Activity },
@@ -54,6 +65,7 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState('ALL')
   const [filterDirection, setFilterDirection] = useState('ALL')
   const [filterExchange, setFilterExchange] = useState('ALL')
+  const [filterOutcome, setFilterOutcome] = useState('ALL')
   const [analyticsRange, setAnalyticsRange] = useState(settings?.defaultRange ?? 'All Time')
   const [dragging, setDragging] = useState(false)
   const [working, setWorking] = useState(false)
@@ -97,8 +109,12 @@ export default function App() {
   }, [stats])
   const filteredTrades = useMemo(() => trades.filter(trade => {
     const matchesQuery = `${trade.symbol} ${trade.exchange ?? ''} ${trade.setup ?? ''}`.toLowerCase().includes(query.toLowerCase())
-    return matchesQuery && (filterStatus === 'ALL' || trade.status === filterStatus) && (filterDirection === 'ALL' || trade.direction === filterDirection) && (filterExchange === 'ALL' || trade.exchange === filterExchange)
-  }).sort((a, b) => (b.openTime ?? b.createdAt).localeCompare(a.openTime ?? a.createdAt)), [trades, query, filterStatus, filterDirection, filterExchange])
+    const matchesStatus = filterStatus === 'ALL' || trade.status === filterStatus
+    const matchesDirection = filterDirection === 'ALL' || trade.direction === filterDirection
+    const matchesExchange = filterExchange === 'ALL' || trade.exchange === filterExchange
+    const matchesOutcome = filterOutcome === 'ALL' || classifyTradeOutcomeForFilter(trade) === filterOutcome
+    return matchesQuery && matchesStatus && matchesDirection && matchesExchange && matchesOutcome
+  }).sort((a, b) => (b.openTime ?? b.createdAt).localeCompare(a.openTime ?? a.createdAt)), [trades, query, filterStatus, filterDirection, filterExchange, filterOutcome])
 
   const safeAction = async (action: () => Promise<void>) => {
     setWorking(true); setError(null); setSuccess(null)
@@ -283,7 +299,7 @@ export default function App() {
         {success && <div className="notice success-notice" role="status"><span><b>Saved</b><small>{success}</small></span><button onClick={() => setSuccess(null)} aria-label="Dismiss success"><X size={15}/></button></div>}
         {loading && <div className="loading-bar"><span/></div>}
         {page === 'Dashboard' && <Dashboard trades={trades} positions={positions} stats={stats} now={now} onAdd={() => setTradeForm('new')} onUpload={() => setPage('Upload Screenshot')} onTrades={() => setPage('Trades')} onDetail={setDetailTrade} currency={settings.currency} dataUnavailable={loading || Boolean(error)}/>}
-        {page === 'Trades' && <TradesPage trades={filteredTrades} allTrades={trades} query={query} setQuery={setQuery} status={filterStatus} setStatus={setFilterStatus} direction={filterDirection} setDirection={setFilterDirection} exchange={filterExchange} setExchange={setFilterExchange} onAdd={() => setTradeForm('new')} onEdit={setTradeForm} onDetail={setDetailTrade} onDelete={deleteTrade} now={now} currency={settings.currency} dataUnavailable={loading || Boolean(error)}/>}
+        {page === 'Trades' && <TradesPage trades={filteredTrades} allTrades={trades} query={query} setQuery={setQuery} status={filterStatus} setStatus={setFilterStatus} direction={filterDirection} setDirection={setFilterDirection} exchange={filterExchange} setExchange={setFilterExchange} outcome={filterOutcome} setOutcome={setFilterOutcome} onAdd={() => setTradeForm('new')} onEdit={setTradeForm} onDetail={setDetailTrade} onDelete={deleteTrade} now={now} currency={settings.currency} dataUnavailable={loading || Boolean(error)}/>}
         {page === 'Open Positions' && <PositionsPage trades={positions} now={now} onAdd={() => setTradeForm('new')} onDetail={setDetailTrade} currency={settings.currency} dataUnavailable={loading || Boolean(error)}/>}
         {page === 'Upload Screenshot' && <UploadPage screenshots={screenshots} trades={trades} dragging={dragging} setDragging={setDragging} inputRef={inputRef} cameraInputRef={cameraInputRef} onFiles={uploadFiles} onReview={setReviewScreenshot} onRetry={retryScreenshot} onDelete={shot => safeAction(() => deleteScreenshot(shot))} onAssociate={(shot, id) => safeAction(() => associateScreenshot(shot.id, id || null))} onDeleteAll={handleDeleteAllScreenshots} deleteAllConfirm={deleteAllConfirm} now={now}/>}
         {page === 'Analytics' && <AnalyticsPage trades={trades} stats={stats} range={analyticsRange} setRange={setAnalyticsRange} currency={settings.currency}/>}
@@ -343,9 +359,9 @@ function TradeTable({ trades, now, currency, onOpen, onEdit, onDelete, showEmpty
     </article>})}</div>{trades.length===0&&showEmptyState&&<div className="empty-state"><Search size={22}/><b>No saved trades</b><span>Add a trade or review an uploaded screenshot to get started.</span></div>}</div>
 }
 
-function TradesPage({ trades, allTrades, query, setQuery, status, setStatus, direction, setDirection, exchange, setExchange, onAdd, onEdit, onDetail, onDelete, now, currency, dataUnavailable }: { trades:Trade[]; allTrades:Trade[]; query:string; setQuery:(v:string)=>void; status:string; setStatus:(v:string)=>void; direction:string; setDirection:(v:string)=>void; exchange:string; setExchange:(v:string)=>void; onAdd:()=>void; onEdit:(v:Trade)=>void; onDetail:(v:Trade)=>void; onDelete:(v:Trade)=>void; now:number; currency:string; dataUnavailable:boolean }) {
+function TradesPage({ trades, allTrades, query, setQuery, status, setStatus, direction, setDirection, exchange, setExchange, outcome, setOutcome, onAdd, onEdit, onDetail, onDelete, now, currency, dataUnavailable }: { trades:Trade[]; allTrades:Trade[]; query:string; setQuery:(v:string)=>void; status:string; setStatus:(v:string)=>void; direction:string; setDirection:(v:string)=>void; exchange:string; setExchange:(v:string)=>void; outcome:string; setOutcome:(v:string)=>void; onAdd:()=>void; onEdit:(v:Trade)=>void; onDetail:(v:Trade)=>void; onDelete:(v:Trade)=>void; now:number; currency:string; dataUnavailable:boolean }) {
   const exchanges=[...new Set(allTrades.map(trade=>trade.exchange).filter((value):value is string=>Boolean(value)))].sort()
-  return <><PageTitle eyebrow="TRADE JOURNAL" title="Trades" description="Every position stays a separate, traceable record." action={<Button onClick={onAdd}><Plus size={16}/> Add trade</Button>}/><section className="panel trades-panel"><div className="table-toolbar"><div className="search-box"><Search size={16}/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search symbol, setup, exchange"/></div><label className="filter-select"><Filter size={14}/><select value={status} onChange={event=>setStatus(event.target.value)}><option value="ALL">All statuses</option><option value="OPEN">Open</option><option value="CLOSED">Closed</option><option value="LIQUIDATED">Liquidated</option></select></label><label className="filter-select"><select value={direction} onChange={event=>setDirection(event.target.value)}><option value="ALL">All sides</option><option value="LONG">Long</option><option value="SHORT">Short</option></select></label><label className="filter-select"><select value={exchange} onChange={event=>setExchange(event.target.value)}><option value="ALL">All exchanges</option>{exchanges.map(item=><option key={item}>{item}</option>)}</select></label><span className="toolbar-spacer"/><span className="result-count">{trades.length} trades</span></div><TradeTable trades={trades} now={now} currency={currency} onOpen={onDetail} onEdit={onEdit} onDelete={onDelete} showEmptyState={!dataUnavailable}/></section></>
+  return <><PageTitle eyebrow="TRADE JOURNAL" title="Trades" description="Every position stays a separate, traceable record." action={<Button onClick={onAdd}><Plus size={16}/> Add trade</Button>}/><section className="panel trades-panel"><div className="table-toolbar"><div className="search-box"><Search size={16}/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search symbol, setup, exchange"/></div><label className="filter-select"><Filter size={14}/><select value={status} onChange={event=>setStatus(event.target.value)}><option value="ALL">All statuses</option><option value="OPEN">Open</option><option value="CLOSED">Closed</option><option value="LIQUIDATED">Liquidated</option></select></label><label className="filter-select"><select value={outcome} onChange={event=>setOutcome(event.target.value)}><option value="ALL">All outcomes</option><option value="PROFIT">Profit trades</option><option value="LOSS">Loss trades</option><option value="BREAKEVEN">Breakeven trades</option><option value="OPEN">Open positions</option></select></label><label className="filter-select"><select value={direction} onChange={event=>setDirection(event.target.value)}><option value="ALL">All sides</option><option value="LONG">Long</option><option value="SHORT">Short</option></select></label><label className="filter-select"><select value={exchange} onChange={event=>setExchange(event.target.value)}><option value="ALL">All exchanges</option>{exchanges.map(item=><option key={item}>{item}</option>)}</select></label><span className="toolbar-spacer"/><span className="result-count">{trades.length} trades</span></div><TradeTable trades={trades} now={now} currency={currency} onOpen={onDetail} onEdit={onEdit} onDelete={onDelete} showEmptyState={!dataUnavailable}/></section></>
 }
 
 function PositionsPage({ trades, now, onAdd, onDetail, currency, dataUnavailable }: { trades:Trade[]; now:number; onAdd:()=>void; onDetail:(trade:Trade)=>void; currency:string; dataUnavailable:boolean }) {
