@@ -24,3 +24,14 @@ export function createRevalidationTrigger(refresh: () => void | Promise<void>, i
   trigger.cancel = () => { if (timer) clearTimeout(timer); timer = undefined }
   return trigger
 }
+
+/**
+ * IPO changes use their OWN channel. A failure to subscribe (for example before migration 012 is applied)
+ * must never disturb the existing crypto workspace subscription.
+ */
+export function subscribeIpoChanges(client: SupabaseClient<Database>, userId: string, onChange: () => void): () => void {
+  const channel = client.channel(`ipo-sync-${userId}`)
+  channel.on('postgres_changes', { event: '*', schema: 'public', table: 'ipo_trades' }, onChange)
+  channel.subscribe()
+  return () => { void client.removeChannel(channel) }
+}

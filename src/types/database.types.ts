@@ -25,6 +25,26 @@ type UserSettingsRow = {
   currency: string; theme: 'dark' | 'light'; default_range: string; analytics_view: string; updated_at: string
 }
 
+type IpoTradeRow = {
+  id: string; user_id: string; company_name: string; symbol: string | null; exchange: string | null
+  ipo_type: 'MAINBOARD' | 'SME' | null; mandate_type: 'ASBA' | 'UPI' | null; bid_type: 'CUTOFF' | 'LIMIT' | null
+  application_number: string | null; dp_id: string | null; client_id: string | null; hold_account_masked: string | null
+  open_date: string | null; close_date: string | null; price_band_low: number | null; price_band_high: number | null
+  cutoff_price: number | null; applied_price: number | null; issue_price: number | null; lot_size: number | null
+  lots: number | null; quantity: number | null; application_amount: number | null; blocked_amount: number | null
+  status: 'APPLIED' | 'ALLOTTED' | 'PARTIALLY_ALLOTTED' | 'NOT_ALLOTTED' | 'LISTED'
+  allotment_date: string | null; allotted_quantity: number | null; refund_amount: number | null
+  listing_date: string | null; listing_price: number | null
+  current_price: number | null; current_price_at: string | null; current_price_source: 'MANUAL' | 'SCREENSHOT' | 'PROVIDER' | null
+  exit_price: number | null; exit_quantity: number | null; exit_date: string | null; exit_charges: number | null
+  notes: string | null; created_at: string; updated_at: string
+}
+type IpoExtractionRow = {
+  id: string; user_id: string; ipo_trade_id: string | null; kind: 'APPLICATION' | 'ALLOTMENT' | 'PRICE' | 'UNKNOWN'
+  status: 'EXTRACTED' | 'CONFIRMED' | 'REJECTED'; original_name: string | null; sha256: string | null; raw_text: string
+  ocr_confidence: number | null; parsed: Json; confirmed: Json | null; created_at: string
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -32,6 +52,8 @@ export interface Database {
       screenshots: Table<ScreenshotRow, Partial<ScreenshotRow> & Pick<ScreenshotRow, 'user_id' | 'storage_path' | 'sha256' | 'original_name' | 'content_type' | 'size_bytes'>, Partial<ScreenshotRow>>
       trade_events: Table<TradeEventRow, Omit<Partial<TradeEventRow>, 'trade_id'> & Pick<TradeEventRow, 'user_id' | 'event_type'> & { trade_id: string }, Partial<TradeEventRow>>
       user_settings: Table<UserSettingsRow, Partial<UserSettingsRow> & Pick<UserSettingsRow, 'user_id'>, Partial<UserSettingsRow>>
+      ipo_trades: Table<IpoTradeRow, Partial<IpoTradeRow> & Pick<IpoTradeRow, 'user_id' | 'company_name'>, Partial<IpoTradeRow>>
+      ipo_extractions: Table<IpoExtractionRow, Partial<IpoExtractionRow> & Pick<IpoExtractionRow, 'user_id' | 'kind'>, Partial<IpoExtractionRow>>
     }
     Views: Record<string, never>
     Functions: Record<string, never>

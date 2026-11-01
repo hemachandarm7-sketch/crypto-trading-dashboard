@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bitcoin, CalendarDays, Camera, Check, ChevronDown, CircleHelp, Clock3, CloudUpload, FileImage, Filter, LayoutDashboard, Menu, MoreHorizontal, Plus, Search, Settings as SettingsIcon, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, TrendingUp, Upload, Wallet, X } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bitcoin, CalendarDays, Camera, Check, ChevronDown, CircleHelp, Clock3, CloudUpload, FileImage, Filter, LayoutDashboard, Menu, MoreHorizontal, Plus, Search, Settings as SettingsIcon, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, TrendingUp, Upload, Wallet, X, Landmark } from 'lucide-react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { buildExitMethodOutcomeAnalysis, buildCoinPerformance, buildDirectionPerformance, buildEquityCurve, buildPnlBuckets, getAnalytics, getRealizedPnl } from './services/analytics'
 import { confirmManualExtraction, processScreenshot } from './services/screenshotExtractionService'
@@ -13,6 +13,10 @@ import { useSupabaseWorkspace } from './hooks/useSupabaseWorkspace'
 import { AccountGate, PasswordRecovery, SessionLoading } from './components/AccountScreens'
 import type { CloseReason, Direction, ExtractedTradeData, Screenshot, ScreenshotType, Trade, UserSettings } from './types'
 import { formatCurrencyUSD } from './utils/currency'
+import { IpoDetail, IpoEditor, IpoImportModal, IpoPage, TradeTypeSwitch } from './components/IpoScreens'
+import { validateIpoRecord } from './services/ipoCalculations'
+import { removeIpoTrade, updateIpoTrade, insertIpoTrade } from './services/ipoRepository'
+import { ipoToDraft, type IpoDraft, type IpoStatus, type IpoTrade } from './types/ipo'
 
 /**
  * Classify trade outcome based on realized net PNL (including fees)
@@ -25,9 +29,9 @@ function classifyTradeOutcomeForFilter(trade: Trade): 'PROFIT' | 'LOSS' | 'BREAK
   return 'LOSS'
 }
 
-type Page = 'Dashboard' | 'Trades' | 'Open Positions' | 'Upload Screenshot' | 'Analytics' | 'Settings'
+type Page = 'Dashboard' | 'Trades' | 'Open Positions' | 'IPOs' | 'Upload Screenshot' | 'Analytics' | 'Settings'
 const navigation: { page: Page; icon: typeof LayoutDashboard }[] = [
-  { page: 'Dashboard', icon: LayoutDashboard }, { page: 'Trades', icon: BarChart3 }, { page: 'Open Positions', icon: Activity },
+  { page: 'Dashboard', icon: LayoutDashboard }, { page: 'Trades', icon: BarChart3 }, { page: 'Open Positions', icon: Activity }, { page: 'IPOs', icon: Landmark },
   { page: 'Upload Screenshot', icon: CloudUpload }, { page: 'Analytics', icon: TrendingUp }, { page: 'Settings', icon: SettingsIcon },
 ]
 const mobileNavigation = navigation.filter(({ page }) => ['Dashboard', 'Trades', 'Upload Screenshot', 'Analytics', 'Settings'].includes(page))
@@ -53,11 +57,17 @@ const draftFromTrade = (trade?: Trade | null, defaultSettings?: UserSettings): T
 
 export default function App() {
   const workspace = useSupabaseWorkspace()
-  const { trades, screenshots, settings, loading, error, setError, refresh, setSettings, identity } = workspace
+  const { trades, ipos, ipoError, screenshots, settings, loading, error, setError, refresh, setSettings, identity } = workspace
   const [page, setPage] = useState<Page>('Dashboard')
   const [mobileNav, setMobileNav] = useState(false)
   const [tradeForm, setTradeForm] = useState<Trade | null | 'new'>(null)
   const [detailTrade, setDetailTrade] = useState<Trade | null>(null)
+  const [newTradeType, setNewTradeType] = useState<'CRYPTO' | 'IPO'>('CRYPTO')
+  const [ipoEdit, setIpoEdit] = useState<{ ipo: IpoTrade; initial?: Partial<IpoDraft> } | null>(null)
+  const [detailIpoId, setDetailIpoId] = useState<string | null>(null)
+  const [ipoImport, setIpoImport] = useState<{ target: IpoTrade | null } | null>(null)
+  const detailIpo = ipos.find(item => item.id === detailIpoId) ?? null
+  useEffect(() => { if (tradeForm === null) setNewTradeType('CRYPTO') }, [tradeForm])
   const [reviewScreenshot, setReviewScreenshot] = useState<Screenshot | null>(null)
   const [reviewSaveError, setReviewSaveError] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now())
@@ -142,6 +152,26 @@ export default function App() {
   const deleteTrade = async (trade: Trade) => {
     if (!window.confirm(`Delete ${trade.symbol} trade? Its screenshots will be unlinked and its event history will be removed.`)) return
     await safeAction(async () => { await removeTrade(trade.id); setDetailTrade(null) })
+  }
+  const saveIpo = async (draft: IpoDraft, existing?: IpoTrade) => safeAction(async () => {
+    const check = validateIpoRecord(draft)
+    if (check.errors.length) throw new Error(check.errors[0])
+    if (existing) await updateIpoTrade(existing.id, draft)
+    else await insertIpoTrade(draft)
+    setTradeForm(null); setIpoEdit(null)
+    setSuccess(existing ? `${draft.companyName} updated.` : `${draft.companyName} added.`)
+  })
+  const saveIpoPrice = async (ipo: IpoTrade, price: number, at: string) => {
+    const draft: IpoDraft = { ...ipoToDraft(ipo), currentPrice: price, currentPriceAt: at, currentPriceSource: 'MANUAL' }
+    const check = validateIpoRecord(draft)
+    if (check.errors.length) throw new Error(check.errors[0])
+    await updateIpoTrade(ipo.id, draft)
+    await refresh()
+    setSuccess(`${ipo.companyName} price updated.`)
+  }
+  const deleteIpo = async (ipo: IpoTrade) => {
+    if (!window.confirm(`Delete ${ipo.companyName}? Its imported screenshot text will be unlinked.`)) return
+    await safeAction(async () => { await removeIpoTrade(ipo.id); setDetailIpoId(null) })
   }
   const uploadFiles = async (files: FileList | File[]) => {
     const selected = Array.from(files)
@@ -301,12 +331,18 @@ export default function App() {
         {page === 'Dashboard' && <Dashboard trades={trades} positions={positions} stats={stats} now={now} onAdd={() => setTradeForm('new')} onUpload={() => setPage('Upload Screenshot')} onTrades={() => setPage('Trades')} onDetail={setDetailTrade} currency={settings.currency} dataUnavailable={loading || Boolean(error)}/>}
         {page === 'Trades' && <TradesPage trades={filteredTrades} allTrades={trades} query={query} setQuery={setQuery} status={filterStatus} setStatus={setFilterStatus} direction={filterDirection} setDirection={setFilterDirection} exchange={filterExchange} setExchange={setFilterExchange} outcome={filterOutcome} setOutcome={setFilterOutcome} onAdd={() => setTradeForm('new')} onEdit={setTradeForm} onDetail={setDetailTrade} onDelete={deleteTrade} now={now} currency={settings.currency} dataUnavailable={loading || Boolean(error)}/>}
         {page === 'Open Positions' && <PositionsPage trades={positions} now={now} onAdd={() => setTradeForm('new')} onDetail={setDetailTrade} currency={settings.currency} dataUnavailable={loading || Boolean(error)}/>}
+        {page === 'IPOs' && <IpoPage ipos={ipos} loadError={ipoError} onAdd={() => { setNewTradeType('IPO'); setTradeForm('new') }} onImport={() => setIpoImport({ target: null })} onOpen={item => setDetailIpoId(item.id)} cryptoRealizedPnlUsd={getRealizedPnl(trades)} cryptoOpenMarginUsd={positions.reduce((sum, trade) => sum + (trade.margin ?? 0), 0)}/>}
         {page === 'Upload Screenshot' && <UploadPage screenshots={screenshots} trades={trades} dragging={dragging} setDragging={setDragging} inputRef={inputRef} cameraInputRef={cameraInputRef} onFiles={uploadFiles} onReview={setReviewScreenshot} onRetry={retryScreenshot} onDelete={shot => safeAction(() => deleteScreenshot(shot))} onAssociate={(shot, id) => safeAction(() => associateScreenshot(shot.id, id || null))} onDeleteAll={handleDeleteAllScreenshots} deleteAllConfirm={deleteAllConfirm} now={now}/>}
         {page === 'Analytics' && <AnalyticsPage trades={trades} stats={stats} range={analyticsRange} setRange={setAnalyticsRange} currency={settings.currency}/>}
         {page === 'Settings' && <SettingsPage key={identity.id} settings={settings} onSave={changeSettings} identity={identity} tradeCount={trades.length} working={working} onLinkWorkspace={linkCurrentWorkspace} onFinishAccount={completeCurrentAccount} onRequestReset={requestCurrentPasswordReset} onLogout={logOut}/>}
       </div>
     </main>
-    {tradeForm && <TradeEditor trade={tradeForm === 'new' ? null : tradeForm} onClose={() => setTradeForm(null)} onSave={saveTrade} working={working} settings={settings}/>}
+    {tradeForm && (tradeForm === 'new' && newTradeType === 'IPO'
+      ? <IpoEditor ipo={null} onClose={() => setTradeForm(null)} onSave={saveIpo} working={working} typeSwitch={<TradeTypeSwitch value="IPO" onChange={setNewTradeType}/>}/>
+      : <TradeEditor trade={tradeForm === 'new' ? null : tradeForm} onClose={() => setTradeForm(null)} onSave={saveTrade} working={working} settings={settings} typeSwitch={tradeForm === 'new' ? <TradeTypeSwitch value="CRYPTO" onChange={setNewTradeType}/> : undefined}/>)}
+    {ipoEdit && <IpoEditor ipo={ipoEdit.ipo} initial={ipoEdit.initial} onClose={() => setIpoEdit(null)} onSave={saveIpo} working={working}/>}
+    {detailIpo && !ipoEdit && <IpoDetail ipo={detailIpo} onClose={() => setDetailIpoId(null)} onEdit={() => setIpoEdit({ ipo: detailIpo })} onDelete={() => void deleteIpo(detailIpo)} onAdvance={(status: IpoStatus) => setIpoEdit({ ipo: detailIpo, initial: { status } })} onImport={() => setIpoImport({ target: detailIpo })} onPrice={(price, at) => saveIpoPrice(detailIpo, price, at)}/>}
+    {ipoImport && <IpoImportModal ipos={ipos} target={ipoImport.target} onClose={() => setIpoImport(null)} onSaved={async message => { setIpoImport(null); await refresh(); setSuccess(message) }}/>}
     {detailTrade && <TradeDetail trade={detailTrade} screenshots={screenshots.filter(screenshot => screenshot.tradeId === detailTrade.id)} onClose={() => setDetailTrade(null)} onEdit={() => { setTradeForm(detailTrade); setDetailTrade(null) }} onDelete={() => void deleteTrade(detailTrade)} currency={settings.currency}/>}
     {reviewScreenshot && <ManualExtractionReview screenshot={reviewScreenshot} trades={trades} onClose={() => setReviewScreenshot(null)} onSave={manualExtraction} working={working} saveError={reviewSaveError}/>}
   </div>
@@ -446,13 +482,13 @@ function SettingsPage({ settings, onSave, identity, tradeCount, working, onLinkW
 }
 function SettingRow({ label, description, children }: { label:string; description:string; children:React.ReactNode }) { return <div className="setting-row"><div><b>{label}</b><small>{description}</small></div>{children}</div> }
 
-function TradeEditor({ trade, onClose, onSave, working, settings }: { trade:Trade|null; onClose:()=>void; onSave:(draft:TradeDraft,trade?:Trade)=>Promise<void>; working:boolean; settings:UserSettings }) {
+function TradeEditor({ trade, onClose, onSave, working, settings, typeSwitch }: { trade:Trade|null; onClose:()=>void; onSave:(draft:TradeDraft,trade?:Trade)=>Promise<void>; working:boolean; settings:UserSettings; typeSwitch?:React.ReactNode }) {
   const [form,setForm]=useState<TradeDraft>(()=>draftFromTrade(trade??null, settings))
   const patch=<K extends keyof TradeDraft>(key:K,value:TradeDraft[K])=>setForm(current=>({...current,[key]:value}))
   const numeric=(key:keyof TradeDraft,label:string,value:number|null,step='any')=><label>{label}<input type="number" step={step} value={value??''} onChange={event=>patch(key,(event.target.value===''?null:Number(event.target.value)) as TradeDraft[typeof key])}/></label>
   const date=(key:'openTime'|'closeTime',label:string,value:string|null)=><label>{label}<input type="datetime-local" value={value?new Date(value).toISOString().slice(0,16):''} onChange={event=>patch(key,event.target.value?new Date(event.target.value).toISOString():null)}/></label>
   const submit=(event:React.FormEvent)=>{event.preventDefault();const draft={...form,symbol:form.symbol.trim().toUpperCase()};if((draft.status==='CLOSED'||draft.status==='LIQUIDATED')&&draft.openTime&&draft.closeTime){const seconds=Math.max(0,Math.floor((Date.parse(draft.closeTime)-Date.parse(draft.openTime))/1000));draft.holdingDurationSeconds=seconds;draft.holdingDurationDisplay=formatDuration(seconds)}if(draft.status==='OPEN'){draft.closeReason=null;draft.closeTime=null;draft.closePrice=null;draft.pnlAmount=null;draft.pnlPercentage=null;draft.holdingDurationSeconds=null;draft.holdingDurationDisplay=null}if(draft.status==='LIQUIDATED'){draft.closeReason=null}void onSave(draft,trade??undefined)}
-  return <div className="modal-backdrop" onMouseDown={event=>event.target===event.currentTarget&&onClose()}><form className="trade-modal" onSubmit={submit}><div className="modal-head"><div><div className="eyebrow">PERSISTED TRADE</div><h2>{trade?'Edit trade':'Add trade'}</h2></div><button type="button" className="icon-button" onClick={onClose}><X size={18}/></button></div><div className="form-grid"><label className="span-two">Symbol<input required placeholder="BTC/USDT" value={form.symbol} onChange={event=>patch('symbol',event.target.value)}/></label><label>Direction<select value={form.direction ?? ''} onChange={event=>patch('direction',(event.target.value||null) as Direction|null)}><option value="">Unknown / unset</option><option value="LONG">Long</option><option value="SHORT">Short</option></select></label><label>Status<select value={form.status} onChange={event=>patch('status',event.target.value as Trade['status'])}><option value="OPEN">Open</option><option value="CLOSED">Closed</option><option value="LIQUIDATED">Liquidated</option></select></label><label>Exchange<input value={form.exchange??''} onChange={event=>patch('exchange',event.target.value||null)}/></label><label>Market type<input value={form.marketType??''} onChange={event=>patch('marketType',event.target.value||null)}/></label>{numeric('leverage','Leverage',form.leverage)}{numeric('quantity','Quantity',form.quantity)}{numeric('size','Size',form.size)}{numeric('margin','Margin',form.margin)}{numeric('avgEntry','Average entry',form.avgEntry)}{numeric('ltp','LTP',form.ltp)}{numeric('liquidationPrice','Liquidation price',form.liquidationPrice)}{numeric('takeProfit','Take profit',form.takeProfit)}{numeric('stopLoss','Stop loss',form.stopLoss)}{date('openTime','Open time',form.openTime)}{date('closeTime','Close time',form.closeTime)}{numeric('closePrice','Close price',form.closePrice)}{numeric('pnlAmount','P&L amount',form.pnlAmount)}{numeric('pnlPercentage','P&L percentage',form.pnlPercentage)}{form.status==='CLOSED'&&<label>Close reason<select value={form.closeReason??''} onChange={event=>patch('closeReason',(event.target.value||null) as CloseReason|null)}><option value="">Unknown / not closed</option><option value="TP_HIT">TP hit</option><option value="SL_HIT">SL hit</option><option value="MANUAL_CLOSE">Manual close</option><option value="UNKNOWN">Unknown</option></select></label>}{form.status==='LIQUIDATED'&&<label>Close reason<div style={{padding:'8px',color:'var(--text-secondary)',fontSize:'0.9em'}}>Liquidated (auto-closed)</div></label>}<label>Exchange position ID<input value={form.exchangePositionId??''} onChange={event=>patch('exchangePositionId',event.target.value||null)}/></label><label>Setup<input value={form.setup??''} onChange={event=>patch('setup',event.target.value||null)}/></label><label className="span-two">Notes<textarea rows={3} value={form.notes??''} onChange={event=>patch('notes',event.target.value||null)}/></label></div><div className="modal-footer"><Button secondary onClick={onClose}>Cancel</Button><button className="button button-primary" type="submit" disabled={working}><Check size={15}/>{working?'Saving…':'Save trade'}</button></div></form></div>
+  return <div className="modal-backdrop" onMouseDown={event=>event.target===event.currentTarget&&onClose()}><form className="trade-modal" onSubmit={submit}><div className="modal-head"><div><div className="eyebrow">PERSISTED TRADE</div><h2>{trade?'Edit trade':'Add trade'}</h2></div><button type="button" className="icon-button" onClick={onClose}><X size={18}/></button></div>{typeSwitch}<div className="form-grid"><label className="span-two">Symbol<input required placeholder="BTC/USDT" value={form.symbol} onChange={event=>patch('symbol',event.target.value)}/></label><label>Direction<select value={form.direction ?? ''} onChange={event=>patch('direction',(event.target.value||null) as Direction|null)}><option value="">Unknown / unset</option><option value="LONG">Long</option><option value="SHORT">Short</option></select></label><label>Status<select value={form.status} onChange={event=>patch('status',event.target.value as Trade['status'])}><option value="OPEN">Open</option><option value="CLOSED">Closed</option><option value="LIQUIDATED">Liquidated</option></select></label><label>Exchange<input value={form.exchange??''} onChange={event=>patch('exchange',event.target.value||null)}/></label><label>Market type<input value={form.marketType??''} onChange={event=>patch('marketType',event.target.value||null)}/></label>{numeric('leverage','Leverage',form.leverage)}{numeric('quantity','Quantity',form.quantity)}{numeric('size','Size',form.size)}{numeric('margin','Margin',form.margin)}{numeric('avgEntry','Average entry',form.avgEntry)}{numeric('ltp','LTP',form.ltp)}{numeric('liquidationPrice','Liquidation price',form.liquidationPrice)}{numeric('takeProfit','Take profit',form.takeProfit)}{numeric('stopLoss','Stop loss',form.stopLoss)}{date('openTime','Open time',form.openTime)}{date('closeTime','Close time',form.closeTime)}{numeric('closePrice','Close price',form.closePrice)}{numeric('pnlAmount','P&L amount',form.pnlAmount)}{numeric('pnlPercentage','P&L percentage',form.pnlPercentage)}{form.status==='CLOSED'&&<label>Close reason<select value={form.closeReason??''} onChange={event=>patch('closeReason',(event.target.value||null) as CloseReason|null)}><option value="">Unknown / not closed</option><option value="TP_HIT">TP hit</option><option value="SL_HIT">SL hit</option><option value="MANUAL_CLOSE">Manual close</option><option value="UNKNOWN">Unknown</option></select></label>}{form.status==='LIQUIDATED'&&<label>Close reason<div style={{padding:'8px',color:'var(--text-secondary)',fontSize:'0.9em'}}>Liquidated (auto-closed)</div></label>}<label>Exchange position ID<input value={form.exchangePositionId??''} onChange={event=>patch('exchangePositionId',event.target.value||null)}/></label><label>Setup<input value={form.setup??''} onChange={event=>patch('setup',event.target.value||null)}/></label><label className="span-two">Notes<textarea rows={3} value={form.notes??''} onChange={event=>patch('notes',event.target.value||null)}/></label></div><div className="modal-footer"><Button secondary onClick={onClose}>Cancel</Button><button className="button button-primary" type="submit" disabled={working}><Check size={15}/>{working?'Saving…':'Save trade'}</button></div></form></div>
 }
 
 function TradeDetail({ trade, screenshots, onClose, onEdit, onDelete, currency }: { trade:Trade; screenshots:Screenshot[]; onClose:()=>void; onEdit:()=>void; onDelete:()=>void; currency:string }) {

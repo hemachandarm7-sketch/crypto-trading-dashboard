@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Screenshot, Trade, UserSettings } from '../types'
+import type { IpoTrade } from '../types/ipo'
+import { listIpoTrades } from '../services/ipoRepository'
 import { defaultUserSettings, listScreenshots, listTrades, loadUserSettings } from '../services/tradeRepository'
 import { getWorkspaceIdentity, requireSupabase, supabaseConfigured, type WorkspaceIdentity } from '../services/supabaseClient'
-import { createRevalidationTrigger, subscribeWorkspaceChanges } from '../services/workspaceSync'
+import { createRevalidationTrigger, subscribeIpoChanges, subscribeWorkspaceChanges } from '../services/workspaceSync'
 import { mapWorkspaceIdentity } from '../services/accountIdentity'
 
 export function useSupabaseWorkspace() {
   const [trades, setTrades] = useState<Trade[]>([])
   const [screenshots, setScreenshots] = useState<Screenshot[]>([])
   const [settings, setSettings] = useState<UserSettings>(defaultUserSettings)
+  const [ipos, setIpos] = useState<IpoTrade[]>([])
+  const [ipoError, setIpoError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [identity, setIdentity] = useState<WorkspaceIdentity | null>(null)
@@ -32,12 +36,19 @@ export function useSupabaseWorkspace() {
         identityId.current = null
         setTrades([])
         setScreenshots([])
+        setIpos([])
+        setIpoError(null)
         setSettings(defaultUserSettings)
         setIdentity(null)
         return []
       }
+      // IPO data is loaded independently: if its table is unavailable (e.g. migration 012 not applied yet) only the IPO screen reports it.
+      const ipoLoad = listIpoTrades().then(list => ({ list, message: null as string | null }), (cause: unknown) => ({ list: [] as IpoTrade[], message: cause instanceof Error ? cause.message : 'Could not load IPOs.' }))
       const [nextTrades, nextScreenshots, nextSettings] = await Promise.all([listTrades(), listScreenshots(), loadUserSettings()])
+      const nextIpos = await ipoLoad
       if (currentRequest !== requestId.current) return null
+      setIpos(nextIpos.list)
+      setIpoError(nextIpos.message)
       setTrades(nextTrades)
       setScreenshots(nextScreenshots)
       setSettings(nextSettings)
@@ -65,6 +76,8 @@ export function useSupabaseWorkspace() {
         requestId.current += 1
         setTrades([])
         setScreenshots([])
+        setIpos([])
+        setIpoError(null)
         setSettings(defaultUserSettings)
       }
       identityId.current = nextId
@@ -82,6 +95,7 @@ export function useSupabaseWorkspace() {
     const client = requireSupabase()
     const revalidate = createRevalidationTrigger(async () => { await refresh() }, () => document.visibilityState === 'visible')
     const removeChannel = subscribeWorkspaceChanges(client, identity.id, revalidate)
+    const removeIpoChannel = subscribeIpoChanges(client, identity.id, revalidate)
     window.addEventListener('focus', revalidate)
     document.addEventListener('visibilitychange', revalidate)
     window.addEventListener('online', revalidate)
@@ -93,8 +107,9 @@ export function useSupabaseWorkspace() {
       document.removeEventListener('visibilitychange', revalidate)
       window.removeEventListener('online', revalidate)
       removeChannel()
+      removeIpoChannel()
     }
   }, [identity?.id, refresh])
 
-  return { trades, setTrades, screenshots, setScreenshots, settings, setSettings, loading, error, setError, refresh, identity, passwordRecovery, setPasswordRecovery }
+  return { trades, setTrades, ipos, setIpos, ipoError, screenshots, setScreenshots, settings, setSettings, loading, error, setError, refresh, identity, passwordRecovery, setPasswordRecovery }
 }
